@@ -1,1 +1,203 @@
 # Grid
+
+Grid is a low-level language using a mix of imperative and functional constructs, with a focus on being easy to read and reason about.
+
+## Goals
+
+- Reducing the amount of boilerplate required for powerful constructs
+- Algebraic and composite types
+- Type and value pattern matching
+- Scope-based memory management without explicit ownership or lifetime tracking
+  - No garbage collector or reference counting, no borrow checking
+- No external dependencies for self-hosting compiler
+- First-class Atomics for mutexes, rwlocks, spinlocks
+- First-class functions
+- Structured concurrency
+
+## Structure
+
+A grid program can be split into multiple source files called modules that serve to group files into namespaces. So a source file has the following structure:
+
+```
+module <name>
+
+[import [path/]module]
+
+[statements]
+```
+
+The only required module is `main`, which must exist in at least one source file the compiler reads. If a source file is in a subdirectory of the project root, it can be addressed via the `path` portion for importing into the current module as seen above.
+
+Importing a module makes its contents available in the current module via namespacing and the Member operator `.` (See below). If we have the following module named `main.grid` for example:
+
+```
+module main
+
+import hello
+
+fn main(argc: int, argv: [str]) {
+  print(test.greeting)
+}
+```
+
+And we have another module `hello.grid` with the following:
+
+```
+module hello
+
+greeting = "Hello, world!"
+```
+
+Then compiling and running the project will print the line "Hello, world!" as you might expect.
+
+The `main` module is special as it is where a `main` function must be defined, and is where execution of your program will begin. The `main` function always takes two arguments -- the length of the program arguments, and an array of the arguments -- and must return an integer -- the exit code for the program.
+
+## Functions
+
+Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out. They are defined as follows:
+
+```
+func <funcname>(<argname>: <argtype>) -> <returntype> {
+  // ...
+}
+```
+
+Functions are called with a similar syntax:
+
+```
+<varname> = <funcname>(<argname>)
+```
+
+If the function returns a value you can assign it in an expression, as seen above, but this is not required.
+
+## Types and Structs
+
+Grid has a nominal typing system that allows for composition and algebraic types. Nominal typing means that two types with the same structure but different names are not considered to be the same type.
+
+The format of type definitions is as follows:
+
+```
+type <name> = type [| type]
+```
+
+This example demonstrates a type assignment. If only one target type is given, this serves as a type alias. If more than one is given, this serves as an algebraic (sum) type, where the new type can be one of the listed *type variants*.
+
+```
+struct <name> [base] {
+  <name>: <type>
+}
+```
+
+This example demonstrates a structure type (Struct), which contains one or more named *fields*. If a base Struct is provided, this Struct will *compose* with the base, so the new Struct will be the combination of the fields of the base Struct.
+
+Both Types and Structs can be used in other Type or Struct definitions as variants or field types.
+
+## Membership
+
+As noted above in the Structure section, we can refer to objects in a namespace via the Member operator `.` and the same applies to Types and Structs.
+
+For example:
+
+```
+type Result = Ok | Err
+struct Err {
+  msg: str
+}
+struct IOErr: Err {
+  code: int
+}
+```
+
+We can also define functions attached to types by using the following syntax:
+
+```
+fn(<typevar>: <type>) <funcname>(<argname>: <argtype>) -> <returntype> {
+  ...
+}
+```
+
+For example we can define a `display` function on both of our error types:
+
+```
+fn(e: Err) display() {
+  print("Error: " + e.msg)
+}
+fn(e: IOErr) display() {
+  print("IO Error: " e.code + "")
+}
+```
+
+## Literals and Native Types
+
+Grid provides a set of native types that are a core part of the language, and accompanying syntax for specifying literal data of these types. They are as follows:
+
+- int :: Integer number, using digits 0-9, optional `-` prefix for negative
+  - `i: int = -123`
+- num :: Rational number, using digits 0-9, optional `-` prefix and optional `.` for decimals
+  - `f: num = 1.23`
+- char :: UTF-8 character, specified inside single quotes `''`
+  - `c: char = 'z'`
+- str :: UTF-8 string, specified inside double quotes `""`
+  - `s: str = "Hello"`
+- [type] :: homogenous list of `type`, specified inside square brackets `[]`
+  - `l: [int] = [1,2,3]`
+- {typeA:typeB} :: homogenous map of `typeA` to `typeB`, specified inside braces `{}`
+  - `m: {int:str} = {1: "a", 2:"b", 3:"c"}`
+- tup :: heterogenous tuple of types, specified inside parens `()`
+  - `t: tup = ("a", 'b', [1, 2], 3.0)`
+- 
+
+## Variables
+
+Variables are handles to data of a type. They are declared using the following syntax:
+
+```
+<name>: <type> [= <expression>]
+```
+
+A name and type are provided, and you can optionally assign a value.
+
+## References, Ownership, Borrowing, and Moves
+
+Many modern languages have various ways to approach management of data via variables, and Grid takes concepts from some of them, but ultimately uses a very simple set of concepts that make it easy to read and reason about the code.
+
+Fundamentally, Grid treats variables as *handles* to data, and not *buckets* that contain values. This becomes very important when it comes to the concept of references and ownership, discussed more below.
+
+The important distinction in how Grid treats variables is that in statements where one variable is assigned to another, the old handle is invalidated. In some languages this is known as a *move*, and we'll use the same terminology here.
+
+For example:
+
+```
+a: int = 1
+b: int = a
+print(a) // This will error
+```
+
+By assigning the variable `b` to the variable `a`, we have moved the ownership of data to `b`. This is the concept of variables as handles instead of buckets. There's really only one rule to remember: Only one handle may point to a specific piece of data at any point in time.
+
+Another choice of language design arises when it comes to passing data into functions. Some languages use what's called pass-by-value, some use pass-by-reference, and many allow you to choose between the two. Grid always passes by reference, with a few special rules that avoid common downsides (see Scope and Memory sections below.)
+
+When we pass a variable into a function by reference, it can also be understood as *borrowing*. This means that a new handle to the variable will exist for the passed in data for the duration of the function, but will not *move* it away from the original handle.
+
+For example:
+
+```
+i: int = 0
+fn inc(arg: int) {
+  arg = arg + 1
+}
+inc(i)
+// i == 1 now
+```
+
+The variable `i` is passed into `inc`, but is mapped in the function as `arg`, and is thus borrowed. It is still a handle to the data pointed to by `i`, which means adding 1 to `arg` will affect `i` once the function completes.
+
+
+## Blocks and Scope
+
+## Memory Management
+
+## Ideas
+
+- Use `!` to indicate a function mutates values? (Crystal/Ruby)
+- Use `&` to indicate a mutable argument? (Rust)
