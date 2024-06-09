@@ -1,6 +1,6 @@
 # Grid
 
-Grid is a low-level language using a mix of imperative and functional constructs, with a focus on being easy to read and reason about.
+Grid is a high-level language using a mix of imperative and functional constructs, with a focus on being easy to read and reason about.
 
 ## Goals
 
@@ -28,7 +28,7 @@ module <name>
 
 The only required module is `main`, which must exist in at least one source file the compiler reads. If a source file is in a subdirectory of the project root, it can be addressed via the `path` portion for importing into the current module as seen above.
 
-Importing a module makes its contents available in the current module via namespacing and the Member operator `.` (See below). If we have the following module named `main.grid` for example:
+Importing a module makes its contents available in the current module via namespacing and the [Member](#Membership) operator `.`. If we have the following module named `main.grid` for example:
 
 ```
 module main
@@ -68,7 +68,7 @@ Functions are called with a similar syntax:
 <varname> = <funcname>(<argname>)
 ```
 
-If the function returns a value you can assign it in an expression, as seen above, but this is not required.
+If the function returns a value you can assign it in an expression as seen above, but this is not required.
 
 ## Types and Structs
 
@@ -161,7 +161,7 @@ A name and type are provided, and you can optionally assign a value.
 
 Many modern languages have various ways to approach management of data via variables, and Grid takes concepts from some of them, but ultimately uses a very simple set of concepts that make it easy to read and reason about the code.
 
-Fundamentally, Grid treats variables as *handles* to data, and not *buckets* that contain values. This becomes very important when it comes to the concept of references and ownership, discussed more below.
+Fundamentally, Grid treats variables as *handles* to data, and not *buckets* that contain values. This becomes very important when it comes to the concept of references and ownership.
 
 The important distinction in how Grid treats variables is that in statements where one variable is assigned to another, the old handle is invalidated. In some languages this is known as a *move*, and we'll use the same terminology here.
 
@@ -175,7 +175,7 @@ print(a) // This will error
 
 By assigning the variable `b` to the variable `a`, we have moved the ownership of data to `b`. This is the concept of variables as handles instead of buckets. There's really only one rule to remember: Only one handle may point to a specific piece of data at any point in time.
 
-Another choice of language design arises when it comes to passing data into functions. Some languages use what's called pass-by-value, some use pass-by-reference, and many allow you to choose between the two. Grid always passes by reference, with a few special rules that avoid common downsides (see Scope and Memory sections below.)
+Another choice of language design arises when it comes to passing data into functions. Some languages use what's called pass-by-value, some use pass-by-reference, and many allow you to choose between the two. Grid always passes by reference, with a few special rules that avoid common downsides (see [Scope](#Blocks-and-Scope) and [Memory](#Memory-Management))
 
 When we pass a variable into a function by reference, it can also be understood as *borrowing*. This means that a new handle to the variable will exist for the passed in data for the duration of the function, but will not *move* it away from the original handle.
 
