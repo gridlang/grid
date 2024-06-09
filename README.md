@@ -192,10 +192,38 @@ inc(i)
 
 The variable `i` is passed into `inc`, but is mapped in the function as `arg`, and is thus borrowed. It is still a handle to the data pointed to by `i`, which means adding 1 to `arg` will affect `i` once the function completes.
 
+Additionally, when you use the `return` keyword to pass a value back out of the function, if you use a variable that was defined inside the function, the data it references will be *moved* back to the calling scope.
+
+```
+fn createArray() {
+  arr: [int] = [1,2,3,4]
+  return arr
+}
+result: [int] = createArray()
+```
+
+This will move the data referred to by `arr` to the calling scope and assign `result` to it.
+
 
 ## Blocks and Scope
 
+Grid operates similarly to most modern languages when it comes to the concept of *scope*.
+
+- The topmost scope is the *global* scope; objects here are visible from other modules
+- Blocks are delineated with braces `{}`, and can be nested
+- Each block defines a scope, which confines variables and functions within that scope
+- Outer scopes are directly accessible from inner scopes
+
+Assigning to a variable from an outer scope moves the value into that scope the same as assigning within the same scope.
+
+
 ## Memory Management
+
+When a literal is created, memory is allocated for it. If it's assigned to a variable, that memory lasts until it goes out of scope.
+
+Under the covers, values that map to native types will generally be allocated on the stack, where compound data structures may be allocated on the heap. Variables being treated as handles is implemented by them functioning essentially as pointers, without requiring explicit dereferencing or indirection.
+
+All objects within a scope are automatically freed at the end of a scope. 
 
 ## Ideas
 
