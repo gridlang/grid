@@ -131,6 +131,8 @@ fn(e: IOErr) display() {
 
 Grid provides a set of native types that are a core part of the language, and accompanying syntax for specifying literal data of these types. They are as follows:
 
+- bool :: Boolean value, `true` or `false`
+  - 'b: bool = true'
 - int :: Integer number, using digits 0-9, optional `-` prefix for negative
   - `i: int = -123`
 - num :: Rational number, using digits 0-9, optional `-` prefix and optional `.` for decimals
@@ -226,6 +228,67 @@ Under the covers, values that map to native types will generally be allocated on
 When objects are moved, for native types values may be copied if it's more efficient than changing pointers. From the Grid perspective however, semantically everything is moved.
 
 Lastly, all objects within a scope are automatically freed at the end of that scope. For stack objects, nothing is required. For heap objects, the memory is freed via OS interfaces.
+
+## Flow Control
+
+Grid provides a few flow-control constructs that also provide pattern matching.
+
+First we'll cover regular conditionals. They have the following syntax:
+
+```
+<expression> ? [<capturevar> [, <capturevar>]] {
+  <type> => ...
+  <value> -> ...
+}
+```
+
+The `bool` type is builtin. This allows us to match on expressions that evaluate to booleans, which replaces the `if`/`else` constructs in most languages. This also applies to return values from functions.
+
+For example:
+
+```
+a < b ? {
+  true -> ...
+  false -> ...
+}
+
+type Result = Ok | Err
+
+fn read(f: str) -> Result {
+  result = syscall_read(f) ? success {
+    true -> return Ok(result)
+    false -> return Err("Error reading file")
+  }
+}
+
+data: str
+read("test.txt") ? r {
+  Ok => return r
+  Err => panic(r)
+}
+```
+
+In this example we can see both value and type matching, as well as using a Result sum type to map return values through.
+
+## Loops
+
+Looping conditionals work the same way as regular ones, with a different operator and a bit more functionality.
+
+Here's the syntax for example:
+
+```
+<expression> @ [<capturevar> [, <capturevar>]] {
+  <type> => ...
+  <value> -> ...
+}
+```
+
+In this construct, the expression is evaluated repeatedly until `break` is encountered. The keyword `continue` is also usable to skip to the beginning and repeat the iteration.
+
+Note that unless `return`, `break`, or `exit` is used, the loop will never exit.
+
+## Maps
+
 
 ## Ideas
 
