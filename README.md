@@ -132,7 +132,7 @@ fn(e: IOErr) display() {
 Grid provides a set of native types that are a core part of the language, and accompanying syntax for specifying literal data of these types. They are as follows:
 
 - bool :: Boolean value, `true` or `false`
-  - 'b: bool = true'
+  - `b: bool = true`
 - int :: Integer number, using digits 0-9, optional `-` prefix for negative
   - `i: int = -123`
 - num :: Rational number, using digits 0-9, optional `-` prefix and optional `.` for decimals
