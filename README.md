@@ -57,7 +57,7 @@ The `main` module is special as it is where a `main` function must be defined, a
 Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out. They are defined as follows:
 
 ```
-func <funcname>(<argname>: <argtype>) -> <returntype> {
+fn <funcname>(<argname>: <argtype>) -> <returntype> {
   // ...
 }
 ```
