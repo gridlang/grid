@@ -287,10 +287,36 @@ In this construct, the expression is evaluated repeatedly until `break` is encou
 
 Note that unless `return`, `break`, or `exit` is used, the loop will never exit.
 
-## Maps
+## Ranges
 
+Ranges are the last important piece of flow control. They use the `#` operator and iterate over the following collection types:
 
-## Ideas
+- String
+- List
+- Map
+- Tuple
 
-- Use `!` to indicate a function mutates values? (Crystal/Ruby)
+An example is:
+
+```
+<collection> # <capturevar> {
+  // statements
+}
+```
+
+For each item in the collection, it will be mapped to the capturevar and execute the block.
+
+## Comprehensions
+
+Using combinations of these operators, we can compactly represent different types of comprehensions.
+
+For example:
+
+```
+numbers: [int] = [1,2,3,4,5]
+evens: [int] = numbers # n { n % 2 == 0 ? { true => n }}
+```
+
+## TODO
+
 - Use `&` to indicate a mutable argument? (Rust)
