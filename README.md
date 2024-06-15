@@ -229,8 +229,7 @@ Here's the syntax for example:
 
 ```
 <expression> @ [<capturevar> [, <capturevar>]] {
-  <type> => ...
-  <value> -> ...
+  // statements
 }
 ```
 
