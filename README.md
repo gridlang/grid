@@ -287,7 +287,7 @@ handleRequest = (clientSocket: int) -> int {
       sys.print("Error reading request")
       return -1
     }
-    result -> request
+    result -> result
     _ -> return 0
   }
 
