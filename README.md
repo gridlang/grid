@@ -69,13 +69,9 @@ Functions are called with a similar syntax:
 
 If the function returns a value you can assign it in an expression as seen above, but this is not required.
 
-## Custom Types
-
-The way Grid implements custom types is via the Tuple [native type](#literals-and-native-types). 
-
 ## Membership
 
-We can refer to objects in a namespace via the Member operator `.`, as well as indexes of a tuple.
+We can refer to objects in a namespace via the Member operator `.` as well as indexes of a tuple.
 
 ## Literals and Native Types
 
@@ -95,8 +91,104 @@ Grid provides a set of native types that are a core part of the language, and ac
   - `l = [1,2,3]`
 - {typeA:typeB} :: homogenous map of `typeA` to `typeB`, specified inside braces `{}`
   - `m = {1: "a", 2: "b", 3: "c"}`
-- (typeA, typeB, typeC):: heterogenous tuple of types, specified inside parens `()`
+- (typeA, typeB, typeC) :: anonymous tuple of types, specified inside parens `()`
   - `t = ("a", 'b', [1, 2], 3.0)`
+- (name: type) :: structural tuple, named fields with types, specified inside parens `()`
+  - `s = (a: int, b: char)`
+
+**Defaults**
+
+Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](#operators).
+
+The default for each type is as follows:
+
+| bool        |  false |
+| int         |      0 |
+| float       |    0.0 |
+| char        |     '' |
+| str         |     "" |
+| [type]      |     [] |
+| {type:type} |     {} |
+| (type)|     |     () |
+| (name:type) | (name:*default*) |
+
+We can use this in [pattern matching](#flow-control) to evaluate truthiness, because defaults are considered `false`. In other words, a non-default value can be used as shorthand for `true` in a match.
+
+Here's an example to illustrate:
+
+```
+s = ""
+s ? {
+  s -> print("Non-empty")
+  _ -> print("Empty")
+}
+```
+
+This is equivalent to using `s == ""` which evaluates to a `bool`, then matching directly on the value.
+
+For example:
+
+```
+s = ""
+s == "" ? b {
+  false -> print("Non-empty")
+  true -> print("Empty")
+}
+```
+
+By treating all default values of any type as false, and by using variables in patterns instead of literals, we can simplify conditional syntax without introducing type coercions or ambiguity.
+
+**Tuples**
+
+You'll notice that function definitions use structural tuples for the parameters, and function calls use anonymous tuples for arguments. We can also uses these tuples on their own, or in return types.
+
+As mentioned in the section on [membership](#membership), we can use the `.` operator to access the fields of tuples.
+
+```
+a = (1, "2", [3])
+a.0 // 0th field
+b = (x: 1, y: "2", z: [3])
+b.x // named field 'x'
+```
+
+## Operators
+
+Grid provides a variety of operators for use in expressions, with some particular interactions between different types.
+
+**Relational**
+```
+< <= != == >= >
+```
+
+*int, float, char (ordinal), str (length)*
+
+**Boolean**
+```
+&& || !!
+```
+
+*Relational, bool*
+
+**Bitwise**
+```
+& | ^ ! << >>
+```
+
+*int, char*
+
+**Arithmetic**
+```
++ - * / % **
+```
+
+*int, float*
+
+**Assignment**
+```
++= -= *= /=
+```
+
+*int, float*
 
 ## Variables
 
