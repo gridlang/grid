@@ -102,17 +102,17 @@ Each of these types has a *default* value it's initialized with. These default v
 
 The default for each type is as follows:
 
-| type        |  default |
-|-------------|----------|
-| bool        |    false |
-| int         |        0 |
-| float       |      0.0 |
-| char        |       '' |
-| str         |       "" |
-| [type]      |       [] |
-| {type:type} |       {} |
-| (type)|     |       () |
-| (name:type) | (name:_) |
+| type          |    default |
+|---------------|------------|
+| `bool`        |    `false` |
+| `int`         |        `0` |
+| `float`       |      `0.0` |
+| `char`        |       `''` |
+| `str`         |       `""` |
+| `[type]`      |       `[]` |
+| `{type:type}` |       `{}` |
+| `(type)`      |       `()` |
+| `(name:type)` | `(name:_)` |
 
 We can use this in [pattern matching](#flow-control) to evaluate truthiness, because defaults are considered `false`. In other words, a non-default value can be used as shorthand for `true` in a match.
 
