@@ -5,21 +5,20 @@ Grid is a high-level language using a mix of imperative and functional construct
 ## Goals
 
 - Reducing the amount of boilerplate required for powerful constructs
-- Algebraic and composite types
+- Structural typing
 - Type and value pattern matching
+- Clear native type truthiness
 - Scope-based memory management without explicit ownership or lifetime tracking
   - No garbage collector or reference counting, no borrow checking
 - No external dependencies for self-hosting compiler
-- First-class Atomics for mutexes, rwlocks, spinlocks
 - First-class functions
-- Structured concurrency
 
 ## Structure
 
 A grid program can be split into multiple source files called modules that serve to group files into namespaces. So a source file has the following structure:
 
 ```
-module <name>
+#module <name>
 
 [import [path/]module]
 
@@ -35,7 +34,7 @@ module main
 
 import hello
 
-fn main(argc: int, argv: [str]) {
+main = (argc: int, argv: [str]) -> int {
   print(test.greeting)
 }
 ```
@@ -57,7 +56,7 @@ The `main` module is special as it is where a `main` function must be defined, a
 Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out. They are defined as follows:
 
 ```
-fn <funcname>(<argname>: <argtype>) -> <returntype> {
+<funcname> = (<argname>: <argtype>) -> <returntype> {
   // ...
 }
 ```
@@ -70,62 +69,13 @@ Functions are called with a similar syntax:
 
 If the function returns a value you can assign it in an expression as seen above, but this is not required.
 
-## Types and Structs
+## Custom Types
 
-Grid has a nominal typing system that allows for composition and algebraic types. Nominal typing means that two types with the same structure but different names are not considered to be the same type.
-
-The format of type definitions is as follows:
-
-```
-type <name> = type [| type]
-```
-
-This example demonstrates a type assignment. If only one target type is given, this serves as a type alias. If more than one is given, this serves as an algebraic (sum) type, where the new type can be one of the listed *type variants*.
-
-```
-struct <name> [base] {
-  <name>: <type>
-}
-```
-
-This example demonstrates a structure type (Struct), which contains one or more named *fields*. If a base Struct is provided, this Struct will *compose* with the base, so the new Struct will be the combination of the fields of the base Struct.
-
-Both Types and Structs can be used in other Type or Struct definitions as variants or field types.
+The way Grid implements custom types is via the Tuple [native type](#literals-and-native-types). 
 
 ## Membership
 
-As noted above in the Structure section, we can refer to objects in a namespace via the Member operator `.` and the same applies to Types and Structs.
-
-For example:
-
-```
-type Result = Ok | Err
-struct Err {
-  msg: str
-}
-struct IOErr: Err {
-  code: int
-}
-```
-
-We can also define functions attached to types by using the following syntax:
-
-```
-fn(<typevar>: <type>) <funcname>(<argname>: <argtype>) -> <returntype> {
-  ...
-}
-```
-
-For example we can define a `display` function on both of our error types:
-
-```
-fn(e: Err) display() {
-  print("Error: " + e.msg)
-}
-fn(e: IOErr) display() {
-  print("IO Error: " e.code + "")
-}
-```
+We can refer to objects in a namespace via the Member operator `.`, as well as indexes of a tuple.
 
 ## Literals and Native Types
 
@@ -154,10 +104,15 @@ Grid provides a set of native types that are a core part of the language, and ac
 Variables are handles to data of a type. They are declared using the following syntax:
 
 ```
-<name>: <type> [= <expression>]
+<name> [, <name>] = <expression>
 ```
 
-A name and type are provided, and you can optionally assign a value.
+A name and value are required. The type is based on the right-hand side of the assignment:
+- If it is a literal, the type is explicit in the syntax of the literal.
+- If it is a function call, the return type of the function is used.
+- If it is the name of another variable, see the section on [moves](#references,-ownership,-borrowing,-and-moves)
+
+The left-hand side can optionally be a list of names, which are used to *destructure* a Tuple on the right-hand side. This is useful for extracting fields from function returns, for example.
 
 ## References, Ownership, Borrowing, and Moves
 
@@ -170,8 +125,8 @@ The important distinction in how Grid treats variables is that in statements whe
 For example:
 
 ```
-a: int = 1
-b: int = a
+a = 1
+b = a
 print(a) // This will error
 ```
 
@@ -184,7 +139,7 @@ When we pass a variable into a function by reference, it can also be understood 
 For example:
 
 ```
-i: int = 0
+i = 0
 fn inc(arg: int) {
   arg = arg + 1
 }
@@ -198,14 +153,13 @@ Additionally, when you use the `return` keyword to pass a value back out of the 
 
 ```
 fn createArray() {
-  arr: [int] = [1,2,3,4]
+  arr = [1,2,3,4]
   return arr
 }
-result: [int] = createArray()
+result = createArray()
 ```
 
 This will move the data referred to by `arr` to the calling scope and assign `result` to it.
-
 
 ## Blocks and Scope
 
@@ -218,6 +172,7 @@ Grid operates similarly to most modern languages when it comes to the concept of
 
 Assigning to a variable from an outer scope moves the value into that scope the same as assigning within the same scope.
 
+Additionally, blocks have an implicit value. The result of the last expression in a block is considered the value of the block, so if it occurs in a larger expression it can be replaced with its effective value.
 
 ## Memory Management
 
@@ -225,7 +180,7 @@ When a literal is created, memory is allocated for it. If it's assigned to a var
 
 Under the covers, values that map to native types will generally be allocated on the stack, where compound data structures may be allocated on the heap. Variables being treated as handles is implemented by them functioning essentially as pointers, without requiring explicit dereferencing or indirection.
 
-When objects are moved, for native types values may be copied if it's more efficient than changing pointers. From the Grid perspective however, semantically everything is moved.
+When objects are moved, for simple types native to the architecture (int/float/bool/char generally) values may be copied if it's more efficient than changing pointers. From the Grid perspective however, semantically everything is moved.
 
 Lastly, all objects within a scope are automatically freed at the end of that scope. For stack objects, nothing is required. For heap objects, the memory is freed via OS interfaces.
 
@@ -242,7 +197,7 @@ First we'll cover regular conditionals. They have the following syntax:
 }
 ```
 
-The `bool` type is builtin. This allows us to match on expressions that evaluate to booleans, which replaces the `if`/`else` constructs in most languages. This also applies to return values from functions.
+This construct allows us to match on expressions, which replaces the `if`/`else` constructs in most languages. This also applies to return values from functions.
 
 For example:
 
@@ -252,23 +207,20 @@ a < b ? {
   false -> ...
 }
 
-type Result = Ok | Err
-
-fn read(f: str) -> Result {
-  result = syscall_read(f) ? success {
-    true -> return Ok(result)
-    false -> return Err("Error reading file")
+read = (f: str) -> (str, str) {
+  syscall_read(f) ? result, err {
+    err -> return (result, "")
+    _ -> return ("", "Error reading file")
   }
 }
 
-data: str
-read("test.txt") ? r {
-  Ok => return r
-  Err => panic(r)
+data = read("test.txt") ? r, e {
+  e -> r
+  _ -> panic(e)
 }
 ```
 
-In this example we can see both value and type matching, as well as using a Result sum type to map return values through.
+In this example we can see both anonymous and captured conditionals. If no capture vars are provided, the result of the expression can still be matched against anonymously via literals or types.
 
 ## Loops
 
@@ -294,7 +246,6 @@ Ranges are the last important piece of flow control. They use the `#` operator a
 - String
 - List
 - Map
-- Tuple
 
 An example is:
 
@@ -313,10 +264,6 @@ Using combinations of these operators, we can compactly represent different type
 For example:
 
 ```
-numbers: [int] = [1,2,3,4,5]
-evens: [int] = numbers # n { n % 2 == 0 ? { true => n }}
+numbers = [1,2,3,4,5]
+evens = numbers # n { n % 2 -> n }
 ```
-
-## TODO
-
-- Use `&` to indicate a mutable argument? (Rust)
