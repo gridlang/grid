@@ -208,14 +208,14 @@ a < b ? {
 
 read = (f: str) -> str, str {
   syscall_read(f) ? result, err {
-    err -> return (result, "")
-    _ -> return ("", "Error reading file")
+    err -> return ("", "Error reading file")
+    _ -> return (result, "")
   }
 }
 
 data = read("test.txt") ? r, e {
-  e -> r
-  _ -> panic(e)
+  e -> panic(e)
+  _ -> r
 }
 ```
 
