@@ -82,22 +82,21 @@ We can refer to objects in a namespace via the Member operator `.`, as well as i
 Grid provides a set of native types that are a core part of the language, and accompanying syntax for specifying literal data of these types. They are as follows:
 
 - bool :: Boolean value, `true` or `false`
-  - `b: bool = true`
+  - `b = true`
 - int :: Integer number, using digits 0-9, optional `-` prefix for negative
-  - `i: int = -123`
+  - `i = -123`
 - num :: Rational number, using digits 0-9, optional `-` prefix and optional `.` for decimals
-  - `f: num = 1.23`
+  - `f = 1.23`
 - char :: UTF-8 character, specified inside single quotes `''`
-  - `c: char = 'z'`
+  - `c = 'z'`
 - str :: UTF-8 string, specified inside double quotes `""`
-  - `s: str = "Hello"`
+  - `s = "Hello"`
 - [type] :: homogenous list of `type`, specified inside square brackets `[]`
-  - `l: [int] = [1,2,3]`
+  - `l = [1,2,3]`
 - {typeA:typeB} :: homogenous map of `typeA` to `typeB`, specified inside braces `{}`
-  - `m: {int:str} = {1: "a", 2:"b", 3:"c"}`
-- tup :: heterogenous tuple of types, specified inside parens `()`
-  - `t: tup = ("a", 'b', [1, 2], 3.0)`
-- 
+  - `m = {1: "a", 2: "b", 3: "c"}`
+- (typeA, typeB, typeC):: heterogenous tuple of types, specified inside parens `()`
+  - `t = ("a", 'b', [1, 2], 3.0)`
 
 ## Variables
 
