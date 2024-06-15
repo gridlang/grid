@@ -139,7 +139,7 @@ For example:
 
 ```
 i = 0
-fn inc(arg: int) {
+inc = (arg: int) {
   arg = arg + 1
 }
 inc(i)
@@ -151,7 +151,7 @@ The variable `i` is passed into `inc`, but is mapped in the function as `arg`, a
 Additionally, when you use the `return` keyword to pass a value back out of the function, if you use a variable that was defined inside the function, the data it references will be *moved* back to the calling scope.
 
 ```
-fn createArray() {
+createArray = () -> [int] {
   arr = [1,2,3,4]
   return arr
 }
@@ -206,7 +206,7 @@ a < b ? {
   false -> ...
 }
 
-read = (f: str) -> (str, str) {
+read = (f: str) -> str, str {
   syscall_read(f) ? result, err {
     err -> return (result, "")
     _ -> return ("", "Error reading file")
