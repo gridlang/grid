@@ -1,8 +1,0 @@
-[book]
-title = "Grid"
-author = "Eve"
-language = "en"
-multilingual = false
-
-[output.html]
-site-url = "/grid/"

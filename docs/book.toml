@@ -1,0 +1,13 @@
+[book]
+title = "Grid"
+author = "Eve"
+language = "en"
+multilingual = false
+
+[output.html]
+default-theme = "dark"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/gridlang/grid"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/gridlang/grid/edit/main/docs/{path}"
+site-url = "/grid/"
