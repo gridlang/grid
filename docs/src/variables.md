@@ -3,7 +3,7 @@
 Variables are handles to data of a type. They are declared using the following syntax:
 
 ```
-<name> [, <name>] = <expression>
+name, name = expression
 ```
 
 A name and value are required. The type is based on the right-hand side of the assignment:
@@ -11,5 +11,4 @@ A name and value are required. The type is based on the right-hand side of the a
 - If it is a function call, the return type of the function is used.
 - If it is the name of another variable, see the section on [moves](ownership.md)
 
-The left-hand side can optionally be a list of names, which are used to *destructure* a Tuple on the right-hand side. This is useful for extracting fields from function returns, for example.
-
+The left-hand side can optionally be a list of names, which are used to *destructure* a [tuple](types.md) on the right-hand side. This is useful for extracting fields from function returns, for example.
