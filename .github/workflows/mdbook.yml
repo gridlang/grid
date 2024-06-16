@@ -21,6 +21,11 @@ jobs:
       - name: Build site
         run: mdbook build docs
 
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: ./docs/book
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
