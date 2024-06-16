@@ -2,9 +2,9 @@
 
 Ranges are the last important piece of flow control. They use the `#` operator and iterate over the following types:
 
-- str -> char
-- [type] -> type
-- {key:value} -> (key, value)
+- `str` -> `char`
+- `[type]` -> `type`
+- `{key:value}` -> `(key, value)`
 
 An example is:
 
