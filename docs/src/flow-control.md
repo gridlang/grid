@@ -1,6 +1,6 @@
 # Flow Control
 
-Grid provides a few flow-control constructs that also provide pattern matching.
+Grid provides a few flow-control constructs.
 
 First we'll cover regular conditionals. They have the following syntax:
 
