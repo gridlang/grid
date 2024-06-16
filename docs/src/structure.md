@@ -12,7 +12,7 @@ A grid program can be split into multiple source files called modules that serve
 
 The only required module is `main`, which must exist in at least one source file the compiler reads. If a source file is in a subdirectory of the project root, it can be addressed via the `path` portion for importing into the current module as seen above.
 
-Importing a module makes its contents available in the current module via namespacing and the [Member](#Membership) operator `.`. If we have the following module named `main.grid` for example:
+Importing a module makes its contents available in the current module via namespacing and the [Member](membership.md) operator `.`. If we have the following module named `main.grid` for example:
 
 ```
 module main

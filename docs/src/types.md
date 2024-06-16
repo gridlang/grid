@@ -23,7 +23,7 @@ Grid provides a set of base types that are a core part of the language, and acco
 
 ## Defaults
 
-Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](#operators).
+Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md).
 
 The default for each type is as follows:
 
@@ -39,7 +39,7 @@ The default for each type is as follows:
 | `(type)`      |       `()` |
 | `(name:type)` | `(name:_)` |
 
-We can use this in [pattern matching](#flow-control) to evaluate truthiness, because defaults are considered `false`. In other words, a non-default value can be used as shorthand for `true` in a match.
+We can use this in [pattern matching](flow-control.md) to evaluate truthiness, because defaults are considered `false`. In other words, a non-default value can be used as shorthand for `true` in a match.
 
 Here's an example to illustrate:
 
@@ -69,7 +69,7 @@ By treating all default values of any type as false, and by using variables in p
 
 You'll notice that function definitions use structural tuples for the parameters, and function calls use anonymous tuples for arguments. We can also uses these tuples on their own, or in return types.
 
-As mentioned in the section on [membership](#membership), we can use the `.` operator to access the fields of tuples.
+As mentioned in the section on [membership](membership.md), we can use the `.` operator to access the fields of tuples.
 
 ```
 a = (1, "2", [3])

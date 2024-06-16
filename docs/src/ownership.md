@@ -20,7 +20,7 @@ By assigning the variable `b` to the variable `a`, we have moved the ownership o
 
 ## References
 
-Another choice of language design arises when it comes to passing data into functions. Some languages use what's called pass-by-value, some use pass-by-reference, and many allow you to choose between the two. Grid always passes by reference, with a few special rules that avoid common downsides (see [Scope](#Blocks-and-Scope) and [Memory](#Memory-Management))
+Another choice of language design arises when it comes to passing data into functions. Some languages use what's called pass-by-value, some use pass-by-reference, and many allow you to choose between the two. Grid always passes by reference, with a few special rules that avoid common downsides (see [Scope](scope.md) and [Memory](memory.md))
 
 ## Borrowing
 
