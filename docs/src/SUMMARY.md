@@ -9,7 +9,6 @@
 # Language
 
 - [Functions](functions.md)
-- [Membership](membership.md)
 - [Types](types.md)
 - [Variables](variables.md)
 - [Operators](operators.md)
