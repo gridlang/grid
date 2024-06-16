@@ -1,0 +1,15 @@
+[book]
+title = "Grid"
+author = "Eve"
+language = "en"
+multilingual = false
+
+[output.html]
+default-theme = "dark"
+mathjax-support = true
+search = true
+additional-js = []
+additional-css = []
+
+[output.html]
+base-url = "/grid/"
