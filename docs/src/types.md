@@ -15,6 +15,7 @@ The following table lists the type name, rough regex syntax for the literal, an 
 | {type:type} | `\{type:type(, type:type)*\}` | `{"x": 1, "y": 2}` | `{}` | Map of type to type |
 | (type,type) | `\(type(, type)*\)` | `(1, "2", [3])` | `()` | Anonymous tuple of types |
 | (name:type) | `\(field:type(, field:type)*\)` | `(name: str, age: int)` | `(field: default)` | Structured tuple of types |
+| (name:type) -> type |  | `(i: int) -> str` |  | Function type |
 
 Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md). The `(field:default)` for structured tuples above is indicating that whatever the type(s) of the field(s) in that tuple are, their default(s) will be used as the value(s) of the field(s).
 
