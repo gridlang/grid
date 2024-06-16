@@ -8,7 +8,7 @@ The following table lists the type name, rough regex syntax for the literal, an 
 |-----------|-----------------|---------|---------|-------------|
 | bool | `true\|false` | `true` | `false` | Boolean value |
 | int | `-?[0-9]+` | `-123` | `0` | Integer number |
-| num | `-?[0-9]+(\.[0-9]+)?([eE][0-9]+)?` | `-1.23e4` | `0.0` | Rational number |
+| num | `-?[0-9]+(\.[0-9]+)?([eE][0-9]+)?` | `-1.23e4` | `0.0` | Real number |
 | char | `'.?'` | `'z'` | `''` | Single character |
 | str | `".*"` | `"hello"` | `""` | String of characters |
 | [type] | `\[type(, type)*\]` | `[1, 2, 3]` | `[]` | Array of type |
