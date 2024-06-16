@@ -3,7 +3,7 @@
 A grid program can be split into multiple source files called modules that serve to group files into namespaces. A source file has the following structure:
 
 ```
-module <name>
+module name
 
 import path/module
 
