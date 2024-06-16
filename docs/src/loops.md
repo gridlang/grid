@@ -1,8 +1,8 @@
 # Loops
 
-Looping conditionals work the same way as regular ones, with a different operator and a bit more functionality.
+Looping conditionals work similarly to plain conditionals, but with a different operator and a bit more functionality.
 
-Here's the syntax for example:
+Here's the syntax:
 
 ```
 expression @ capturevar, capturevar {
