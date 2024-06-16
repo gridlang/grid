@@ -32,7 +32,7 @@ For example:
 
 ```
 i = 0
-inc = (arg: int) {
+inc = (arg: int) -> {
   arg = arg + 1
 }
 inc(i)
