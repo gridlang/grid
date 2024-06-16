@@ -16,7 +16,9 @@ b = a
 print(a) // This will error
 ```
 
-By assigning the variable `b` to the variable `a`, we have moved the ownership of data to `b`. This is the concept of variables as handles instead of buckets. There's really only one rule to remember: Only one handle may point to a specific piece of data at any point in time.
+By assigning the variable `b` to the variable `a`, we have moved the ownership of data to `b`. This is the concept of variables as handles instead of buckets.
+
+There's really only one rule to remember: **Only one handle may point to a specific piece of data at any point in time.**
 
 ## References
 
