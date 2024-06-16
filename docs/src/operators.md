@@ -13,4 +13,4 @@ Grid provides a variety of operators for use in expressions, with some particula
 
 ## Membership
 
-The membership operator `.` is used for accessing a member of a [namespace](functions.md) or [type](types.md). See those sections for details.
+The membership operator `.` is used for accessing a member of a [namespace](structure.md) or [type](types.md). See those sections for details.
