@@ -1,4 +1,4 @@
-# Blocks and Scope
+# Scope
 
 Grid operates similarly to most modern languages when it comes to the concept of *scope*.
 
@@ -9,5 +9,19 @@ Grid operates similarly to most modern languages when it comes to the concept of
 
 Assigning to a variable from an outer scope moves the value into that scope the same as assigning within the same scope.
 
-Additionally, blocks have an implicit value. The result of the last expression in a block is considered the value of the block, so if it occurs in a larger expression it can be replaced with its effective value.
+## Blocks
 
+Blocks have an implicit value. The result of the last expression in a block is considered the value of the block, so if it occurs in a larger expression it can be replaced with its effective value.
+
+They can be used directly to encapsulate statements, and thus can be used directly in an expression.
+
+For example:
+
+```
+result = {
+  // do calculations
+  data
+}
+```
+
+This will move `data` into `result` in the outer scope.
