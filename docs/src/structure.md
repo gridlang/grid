@@ -1,26 +1,29 @@
 # Structure
 
-A grid program can be split into multiple source files called modules that serve to group files into namespaces. So a source file has the following structure:
+A grid program can be split into multiple source files called modules that serve to group files into namespaces. A source file has the following structure:
 
 ```
-#module <name>
+module <name>
 
-[import [path/]module]
+import path/module
 
-[statements]
+statements
 ```
 
-The only required module is `main`, which must exist in at least one source file the compiler reads. If a source file is in a subdirectory of the project root, it can be addressed via the `path` portion for importing into the current module as seen above.
+The only required module in a project is `main`, which must exist in at least one source file the compiler reads. If a source file is in a subdirectory of the project root, it can be addressed via the `path` portion for importing into the current module as seen above.
 
-Importing a module makes its contents available in the current module via namespacing and the [Member](membership.md) operator `.`. If we have the following module named `main.grid` for example:
+Importing a module makes its contents available in the current module via namespacing and the [member](operators.md) operator `.`
+
+If we have the following module named `main.grid` for example:
 
 ```
 module main
 
 import hello
+import sys
 
 main = (argc: int, argv: [str]) -> int {
-  print(test.greeting)
+  sys.print(test.greeting)
 }
 ```
 
