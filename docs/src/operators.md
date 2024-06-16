@@ -8,7 +8,7 @@ Grid provides a variety of operators for use in expressions, with some particula
 | Boolean | `&& \|\| !!` | bool | bool |
 | Bitwise | `& \| ^ ! << >>` | int, char | int, char |
 | Arithmetic | `+ - * / % **` | int, float | int, float |
-| Assignment | `+= -= *= /=` | int, float | int, float |
+| Assignment | `= += -= *= /=` | int, float | int, float |
 | Membership | `.` |  |  |
 | Pattern | `=> !>` |  |  |
 | Function | `->` |  |  |
