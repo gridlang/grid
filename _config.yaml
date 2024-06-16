@@ -1,8 +1,0 @@
-title: Grid
-description: Documentation for my Grid
-baseurl: "/grid" # Replace with your repository name
-url: "https://gridlang.github.io" # Replace with your GitHub username
-plugins:
-  - jekyll-remote-theme
-remote_theme: sighingnow/jekyll-gitbook
-markdown: GFM
