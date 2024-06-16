@@ -1,0 +1,8 @@
+plugins:
+  - jekyll-relative-links
+remote_theme: sighingnow/jekyll-gitbook
+relative_links:
+  enabled: true
+  collections: true
+  include:
+    - index.md
