@@ -1,8 +1,8 @@
-plugins:
-  - jekyll-relative-links
-remote_theme: sighingnow/jekyll-gitbook
-relative_links:
-  enabled: true
-  collections: true
-  include:
-    - index.md
+title: Grid
+description: Documentation for my Grid
+baseurl: "/grid" # Replace with your repository name
+url: "https://gridlang.github.io" # Replace with your GitHub username
+theme: jekyll-theme-gitbook
+markdown: kramdown
+kramdown:
+  input: GFM
