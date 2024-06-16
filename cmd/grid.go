@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"grid/compiler"
+	// "grid/compiler"
+	"grid/ast"
 	"grid/parser"
 
 	"github.com/charmbracelet/log"
@@ -56,6 +57,12 @@ func init() {
 	}
 }
 
+func printAST(p *ast.Program) {
+	for stmt := range p.Statements {
+		fmt.Printf("stmt: %v\n", stmt)
+	}
+}
+
 func main() {
 	filename := pflag.Arg(0)
 
@@ -68,6 +75,7 @@ func main() {
 
 	log.Debug("Parsing code")
 	program := parser.Parse(filename, file)
-	log.Debug("Compiling code")
-	compiler.GenerateNASM(program)
+	printAST(program)
+	// log.Debug("Compiling code")
+	// compiler.GenerateNASM(program)
 }
