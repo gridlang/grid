@@ -8,6 +8,12 @@ funcname = (argname: argtype) -> returntype {
 }
 ```
 
+The minimum required syntax with no inputs or outputs is:
+
+```
+funcname = () { }
+```
+
 Functions are called with a similar syntax:
 
 ```
