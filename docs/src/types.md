@@ -36,7 +36,7 @@ For example:
 
 ```
 s = ""
-s == "" ? b {
+s == "" ? {
   false => print("Non-empty")
   true => print("Empty")
 }
