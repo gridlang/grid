@@ -7,7 +7,9 @@ import sys
 
 indexOf = (s: str, t: char) -> int {
   s # i, c {
-    c == t -> return i
+    c ? {
+      t -> return i
+    }
   }
 }
 
