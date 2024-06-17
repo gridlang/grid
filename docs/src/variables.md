@@ -2,7 +2,7 @@
 
 Variables are handles to data of a type. They are declared using the following syntax:
 
-```
+```go
 name, name = expression
 ```
 
