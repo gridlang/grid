@@ -4,7 +4,7 @@ The `@` operator is used to reduce a sequence of types to a single type.
 
 Here's the syntax:
 
-```
+```go
 expression @ accumulator, item -> type {
   // statements
 }
@@ -14,7 +14,7 @@ This will iterate over the sequence input, capturing the item and the accumulato
 
 For example:
 
-```
+```go
 numbers = [1,2,3,4,5]
 sum = numbers @ acc, n -> int {
   acc + n
