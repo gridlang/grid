@@ -1,6 +1,6 @@
 # Example
 
-```
+```go
 module main
 
 import sys
@@ -8,7 +8,7 @@ import sys
 indexOf = (s: str, t: char) -> int {
   s # i, c {
     c ? {
-      t -> return i
+      t => return i
     }
   }
 }
@@ -17,12 +17,12 @@ indexOf = (s: str, t: char) -> int {
 handleRequest = (clientSocket: int) -> int {
   // Read the request from the client
   request = sys.read(clientSocket, 1024) ? result, err {
-    err -> {
+    err => {
       sys.print("Error reading request")
       return -1
     }
-    result -> result
-    _ -> return 0
+    result => result
+    _ => return 0
   }
 
   // Parse the HTTP verb from the request
@@ -30,15 +30,15 @@ handleRequest = (clientSocket: int) -> int {
 
   // Match the verb and respond accordingly
   verb ? {
-    "GET" -> {
+    "GET" => {
       response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, GET request!"
       sys.write(clientSocket, response)
     }
-    "POST" -> {
+    "POST" => {
       response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, POST request!"
       sys.write(clientSocket, response)
     }
-    _ -> {
+    _ => {
       response = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\n\r\nMethod Not Allowed"
       sys.write(clientSocket, response)
     }
@@ -55,16 +55,16 @@ main = (argc: int, argv: [str]) -> int {
 
   // Open a socket
   serverSocket = sys.socket(sys.AF_INET, sys.SOCK_STREAM, 0) ? sock, err {
-    err -> {
+    err => {
       sys.print("Error creating socket")
       return -1
     }
-    _ -> sock
+    _ => sock
   }
 
   // Bind the socket to the port
   sys.bind(serverSocket, sys.sockaddr_in(port, sys.INADDR_ANY)) ? err {
-    err -> {
+    err => {
       sys.print("Error binding socket")
       return -1
     }
@@ -72,7 +72,7 @@ main = (argc: int, argv: [str]) -> int {
 
   // Listen for incoming connections
   sys.listen(serverSocket, 5) ? err {
-    err -> {
+    err => {
       sys.print("Error listening on socket")
       return -1
     }
@@ -84,15 +84,15 @@ main = (argc: int, argv: [str]) -> int {
 
   !sys.closed(serverSocket) @ running {
     running ? {
-      false -> break
+      false => break
     }
 
     clientSocket = sys.accept(serverSocket) ? sock, err {
-      err -> {
+      err => {
         sys.print("Error accepting connection")
         break
       }
-      _ -> sock
+      _ => sock
     }
 
     // Handle the request in a separate function
