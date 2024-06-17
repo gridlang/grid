@@ -6,6 +6,6 @@ For example:
 
 ```
 numbers = [1,2,3,4,5]
-odds = numbers # n { n ? { n % 2 => n } }
-evens = numbers # n { n ? { n % 2 !> n } }
+odds = numbers # _, n { n ? { n % 2 => n } }
+evens = numbers # _, n { n ? { n % 2 !> n } }
 ```
