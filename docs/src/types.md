@@ -23,7 +23,7 @@ We can use this in [pattern matching](flow-control.md) to evaluate truthiness, b
 
 Here's an example to illustrate:
 
-```
+```go
 s = ""
 s ? {
   s => print("Non-empty")
@@ -35,7 +35,7 @@ This is equivalent to using `s == ""` which evaluates to a `bool`, then matching
 
 For example:
 
-```
+```go
 s = ""
 s == "" ? {
   false => print("Non-empty")
@@ -51,7 +51,7 @@ You'll notice that [function definitions](functions.md) use structural tuples fo
 
 As mentioned in the section on [operators](operators.md), we can use the `.` operator to access the fields of tuples.
 
-```
+```go
 a = (1, "2", [3])
 a.0 // 0th field
 b = (x: 1, y: "2", z: [3])
