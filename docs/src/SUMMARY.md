@@ -15,8 +15,9 @@
 - [Scope](scope.md)
 - [Memory Management](memory.md)
 - [Flow Control](flow-control.md)
-  * [Loops](loops.md)
-  * [Ranges](ranges.md)
+  * [Conditional](conditional.md)
+  * [Grid](grid.md)
+  * [Reduce](reduce.md)
 - [Comprehensions](comprehensions.md)
 
 # Examples
