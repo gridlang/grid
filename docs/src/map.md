@@ -32,7 +32,7 @@ For example:
 
 ```
 numbers = [1,2,3,4,5]
-plusOne = numbers # n -> [int] {
+plusOne = numbers # _, n -> [int] {
   n + 1
 }
 // plusOne == [2,3,4,5,6]
