@@ -12,7 +12,6 @@
 - [Types](types.md)
 - [Variables](variables.md)
 - [Operators](operators.md)
-- [Ownership](ownership.md)
 - [Scope](scope.md)
 - [Memory Management](memory.md)
 - [Flow Control](flow-control.md)
