@@ -16,7 +16,7 @@
 - [Memory Management](memory.md)
 - [Flow Control](flow-control.md)
   * [Conditional](conditional.md)
-  * [Grid](grid.md)
+  * [Map](map.md)
   * [Reduce](reduce.md)
 - [Comprehensions](comprehensions.md)
 
