@@ -11,7 +11,7 @@ However, there are some key differences:
 - Variables in outer scopes are not accessible from inner scopes
 - Variables can be passed into function scopes as arguments, or operator scopes as captures
 
-The key concept here is that scopes are pure, they cannot have side-effects, because they cannot directly access variables from other scopes, and variables passed into them are pass-by-value.
+The key concept here is that scopes are pure. They cannot have side-effects because they cannot directly access variables from other scopes, and variables passed into them are pass-by-value.
 
 ## Blocks
 
