@@ -2,7 +2,7 @@
 
 Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out. They are defined as follows:
 
-```
+```go
 funcname = (argname: argtype) -> returntype {
   // ...
 }
@@ -10,13 +10,13 @@ funcname = (argname: argtype) -> returntype {
 
 The minimum required syntax with no inputs or outputs is:
 
-```
+```go
 funcname = () -> { }
 ```
 
 Functions are called with a similar syntax:
 
-```
+```go
 varname = funcname(argument)
 ```
 
