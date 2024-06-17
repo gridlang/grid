@@ -2,7 +2,7 @@
 
 A grid program can be split into multiple source files called modules that serve to group files into namespaces. A source file has the following structure:
 
-```
+```go
 module name
 
 import path/module
@@ -16,7 +16,7 @@ Importing a module makes its contents available in the current module via namesp
 
 If we have the following module named `main.grid` for example:
 
-```
+```go
 module main
 
 import hello
@@ -29,7 +29,7 @@ main = (argc: int, argv: [str]) -> int {
 
 And we have another module `hello.grid` with the following:
 
-```
+```go
 module hello
 
 greeting = "Hello, world!"
