@@ -21,7 +21,7 @@ They can be used directly to encapsulate statements, and thus can be used direct
 
 For example:
 
-```
+```go
 result = {
   // do calculations
   data
