@@ -10,7 +10,7 @@ The `#` operator -- also known as the Grid operator -- is used to map over the f
 
 An example is:
 
-```
+```go
 expression # indexvar, itemvar -> returntype {
   // statements
 }
@@ -30,7 +30,7 @@ Grid blocks can specify a return type, which defines how to map returns from the
 
 For example:
 
-```
+```go
 numbers = [1,2,3,4,5]
 plusOne = numbers # _, n -> [int] {
   n + 1
