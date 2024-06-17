@@ -4,7 +4,7 @@ The `?` operator is used in Grid to express a conditional statement.
 
 It has the following syntax:
 
-```
+```go
 expression ? capturevar, capturevar {
   variable => ...
   value => ...
@@ -23,7 +23,7 @@ This construct allows us to match on expressions, which replaces the `if`/`else`
 
 For example:
 
-```
+```go
 a < b ? {
   true => ...
   false => ...
