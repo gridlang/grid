@@ -49,7 +49,7 @@ By treating all default values of any type as false, and by using variables in p
 
 You'll notice that [function definitions](functions.md) use structural tuples for the parameters, and function calls use anonymous tuples for arguments. We can also uses these tuples on their own, or in return types.
 
-As mentioned in the section on [membership](membership.md), we can use the `.` operator to access the fields of tuples.
+As mentioned in the section on [operators](operators.md), we can use the `.` operator to access the fields of tuples.
 
 ```
 a = (1, "2", [3])
