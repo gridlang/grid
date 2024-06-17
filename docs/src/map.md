@@ -1,6 +1,6 @@
-# Grid Operator
+# Map
 
-The `#` operator -- known as the Grid operator -- is used to iterate over the following types:
+The `#` operator -- also known as the Grid operator -- is used to map over the following types:
 
 | Input | Output |
 |-------|--------|
