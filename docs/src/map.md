@@ -18,7 +18,7 @@ expression # indexvar, itemvar -> returntype {
 
 For each item in the input, it will be mapped to the capture and execute the block.
 
-As indicated in the example, the range operator will generate an index (int) and item (depending on input type). If only one capture variable is provided, it's type will be `(int, _)` where the item type depends on the input as listed above. If you provide an index variable and item variable name, it will be destructured to those fields accordingly.
+As indicated in the example, the map operator will generate an index (int) and item (depending on input type). If only one capture variable is provided, it's type will be `(int, _)` where the item type depends on the input as listed above. If you provide an index variable and item variable, it will be destructured to those variables accordingly.
 
 ## Parallelism
 
