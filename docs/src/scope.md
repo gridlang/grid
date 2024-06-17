@@ -1,13 +1,17 @@
 # Scope
 
-Grid operates similarly to most modern languages when it comes to the concept of *scope*.
+Grid operates similarly to most modern languages when it comes to the concept of ***scope***.
 
-- The topmost scope is the *global* scope; objects here are visible from other modules
+- The topmost scope is the module scope; ***functions*** here are visible from other modules
 - Blocks are delineated with braces `{}`, and can be nested
 - Each block defines a scope, which confines variables and functions within that scope
-- Outer scopes are directly accessible from inner scopes
 
-Assigning to a variable from an outer scope moves the value into that scope the same as assigning within the same scope.
+However, there are some key differences:
+
+- Variables in outer scopes are not accessible from inner scopes
+- Variables can be passed into function scopes as arguments, or operator scopes as captures
+
+The key concept here is that scopes are pure, they cannot have side-effects, because they cannot directly access variables from other scopes, and variables passed into them are pass-by-value.
 
 ## Blocks
 
@@ -24,4 +28,4 @@ result = {
 }
 ```
 
-This will move `data` into `result` in the outer scope.
+This will assign `data` to `result` in the outer scope.
