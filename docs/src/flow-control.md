@@ -8,4 +8,4 @@ The operators for flow-control are as follows:
 |----------|-------------|
 | `?` | Conditional |
 | `#` | Map |
-| `@` | Reduce |
+| `@` | Loop |
