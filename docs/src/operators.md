@@ -14,7 +14,7 @@ There are a few other operators available as well:
 
 - The membership operator `.` is used for accessing a member of a [namespace](structure.md) or [type](types.md). See those sections for details.
 - The [postfix assignment](variables.md) operator `?` is used to assign an expression to variables.
-- The [map](map.md) operator `#` is used to iterate over a range of values.
+- The [grid](grid.md) operator `#` is used to iterate over a range of values.
 - The [loop](loop.md) operator `@` is used to repeat an expression based on conditions.
 - The [pattern matching](flow-control.md) operators `=>` and `!>` are used to indicate a true/false match respectively.
 - The [function](functions.md) operator `->` is used to define a function and optional return types.
