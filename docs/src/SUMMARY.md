@@ -17,7 +17,7 @@
 - [Flow Control](flow-control.md)
   * [Conditional](conditional.md)
   * [Map](map.md)
-  * [Reduce](reduce.md)
+  * [Loop](loop.md)
 - [Comprehensions](comprehensions.md)
 
 # Examples
