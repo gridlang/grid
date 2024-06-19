@@ -16,12 +16,12 @@ This will evaluate the expression before each iteration of the loop body. If the
 
 If the input expression results in a tuple, if any of the tuple fields are truthy, the expression is considered truthy as well, as detailed in [types](types.md).
 
-For example, a simple case with no captures:
+For example, a simple case:
 
 ```go
 a = 0
 b = 5
-a < b @ {
+a < b @ t {
   a += 1
   // assignment considered truthy
 }
