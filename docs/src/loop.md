@@ -21,7 +21,7 @@ For example, a simple case:
 ```go
 a = 0
 b = 5
-a < b @ t {
+a < b @ _ {
   a += 1
   // assignment considered truthy
 }
