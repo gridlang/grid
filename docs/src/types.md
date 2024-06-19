@@ -17,7 +17,7 @@ The following table lists the type name, rough regex syntax for the literal, an 
 | (name:type) | `(name: str, age: int)` | `(field: default)` | Structured tuple of types |
 | (name:type) -> type | `(i: int) -> str` | `() ->` | Function type |
 
-Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md). The `(field:default)` for structured tuples above is indicating that whatever the type(s) of the field(s) in that tuple are, their default(s) will be used as the value(s) of the field(s).
+Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md). The `(field:default)` for structured tuples above is indicating that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
 
 We can use this in [pattern matching](flow-control.md) to evaluate truthiness, because defaults are considered `false`. In other words, a non-default value can be used as shorthand for `true` in a match. This has one additional aspect with tuples, where a tuple of all default values of any set of types is also considered `false`, whereas a tuple of any non-default values is considered `true`. This is useful in [loop](loops.md) evaluation.
 
@@ -25,9 +25,8 @@ Here's an example to illustrate:
 
 ```go
 s = ""
-s ? {
-  s => print("Non-empty")
-  _ => print("Empty")
+s => print("Non-empty")
+!s => print("Empty")
 }
 ```
 
@@ -37,9 +36,9 @@ For example:
 
 ```go
 s = ""
-s == "" ? {
-  false => print("Non-empty")
-  true => print("Empty")
+s == "" ? e {
+  e => print("Non-empty")
+  !e => print("Empty")
 }
 ```
 
