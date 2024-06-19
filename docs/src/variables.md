@@ -12,3 +12,5 @@ A name and value are required. The type is based on the right-hand side of the a
 - If it is the name of another variable, the value is copied.
 
 The left-hand side can optionally be a list of names, which are used to *destructure* a [tuple](types.md) on the right-hand side. This is useful for extracting fields from function returns, for example.
+
+All assignments are considered [truthy](types.md) for the purpose of [block](scope.md) return values.
