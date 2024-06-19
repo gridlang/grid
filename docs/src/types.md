@@ -2,7 +2,7 @@
 
 Grid provides a set of base types that are a core part of the language, and accompanying syntax for specifying literal data of these types.
 
-The following table lists the type name, rough regex syntax for the literal, an example in Grid syntax, and the default value for the type:
+The following table lists the type pattern for the literal, an example in Grid syntax, and the default value for the type:
 
 | Type Pattern | Example | Default | Description |
 |--------------|---------|---------|-------------|
