@@ -43,3 +43,20 @@ data = read(f) ? result, err {
 ```
 
 This shows how we might call a `read` function which returns a `(str, str)` tuple, destructuring and mapping it to `result` and `err`. Inside the block, we can use the vars in match clauses instead of literal values.
+
+And a bit more complex example:
+
+```go
+// Map function return to a, b
+f() ? a, b {
+  // Assign result of block
+  // Map function return comparison to t
+  h = g(a) > b ? t {
+    // t is truthy
+    t => ...
+  }
+// map block to x
+} ? x {
+  ...
+}
+```
