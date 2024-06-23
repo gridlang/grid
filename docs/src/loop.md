@@ -12,7 +12,7 @@ expression @ captures {
 }
 ```
 
-This will evaluate the expression before each iteration of the loop body. The `continue` and `break` keywords are used to immediately restart the loop or exit the loop, respectively.
+This will evaluate the expression before each iteration of the loop body. The `continue` and `break` keywords are used to immediately restart the loop or exit the loop, respectively. Additionally, the `break` keyword can take a value to return from the loop which can be assigned as the result of the loop expression.
 
 For example, a simple case with no capture:
 
