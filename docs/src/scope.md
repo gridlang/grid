@@ -11,15 +11,3 @@ Grid operates similarly to most modern languages when it comes to the concept of
 
 Blocks have an implicit value. The result of the last expression in a block is considered the value of the block, so if it occurs in a larger expression it can be replaced with its effective value.
 
-They can be used directly to encapsulate statements, and thus can be used directly in an expression.
-
-For example:
-
-```go
-result = {
-  // do calculations
-  data
-}
-```
-
-This will assign `data` to `result` in the outer scope.

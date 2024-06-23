@@ -11,7 +11,7 @@ The `#` operator -- also known as the Grid operator -- is used to iterate over t
 An example is:
 
 ```go
-expression # indexvar, itemvar -> returntype {
+expression # indexvar, itemvar {
   // statements
 }
 ```

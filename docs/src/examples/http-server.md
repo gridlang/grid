@@ -7,9 +7,7 @@ import sys
 
 indexOf = (s: str, t: char) -> int {
   s # i, c {
-    c ? {
-      t => return i
-    }
+    c == t => return i
   }
 }
 
@@ -21,15 +19,12 @@ handleRequest = (clientSocket: int) -> int {
       sys.print("Error reading request")
       return -1
     }
-    result => result
-    _ => return 0
+    result
   }
 
   // Parse the HTTP verb from the request
-  verb = request[0:indexOf(request, ' ')]
-
-  // Match the verb and respond accordingly
-  verb ? {
+  request[0:indexOf(request, ' ')] ? {
+    // Match the verb and respond accordingly
     "GET" => {
       response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, GET request!"
       sys.write(clientSocket, response)
@@ -59,7 +54,7 @@ main = (argc: int, argv: [str]) -> int {
       sys.print("Error creating socket")
       return -1
     }
-    _ => sock
+    sock
   }
 
   // Bind the socket to the port
@@ -81,18 +76,15 @@ main = (argc: int, argv: [str]) -> int {
   sys.print("Server listening on port ", port)
 
   // Accept connections in a loop
-
-  !sys.closed(serverSocket) @ running {
-    running ? {
-      false => break
-    }
+  sys.closed(serverSocket) @ closed {
+    closed => break
 
     clientSocket = sys.accept(serverSocket) ? sock, err {
       err => {
         sys.print("Error accepting connection")
         break
       }
-      _ => sock
+      sock
     }
 
     // Handle the request in a separate function

@@ -7,8 +7,8 @@ Here's the syntax:
 ```go
 expression @ captures {
   // statements
-  // return truthy to continue
-  // return falsy to break
+  continue // continue the loop
+  break // break the loop
 }
 ```
 
@@ -21,9 +21,8 @@ For example, a simple case:
 ```go
 a = 0
 b = 5
-a < b @ _ {
+a < b @ {
   a += 1
-  // assignment considered truthy
 }
 // a == b
 ```
@@ -35,8 +34,7 @@ And a more complicated case, assuming a function that returns a tuple:
 read(100) @ data, err {
   err => {
     print(err)
-    return false // break out of loop
+    break // break out of loop
   }
-  print(data) // always returns truthy
-}
+  _ => print(data) // continue is implicit
 ```

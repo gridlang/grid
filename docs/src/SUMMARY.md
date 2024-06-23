@@ -2,23 +2,23 @@
 
 [Introduction](index.md)
 
-# Source Code
+# Source
 
 - [Structure](structure.md)
+- [Scope](scope.md)
 
-# Language
+# Language Features
 
 - [Functions](functions.md)
 - [Types](types.md)
 - [Variables](variables.md)
 - [Operators](operators.md)
-- [Scope](scope.md)
-- [Memory Management](memory.md)
 - [Flow Control](flow-control.md)
   * [Conditional](conditional.md)
   * [Grid](grid.md)
   * [Loop](loop.md)
 - [Comprehensions](comprehensions.md)
+- [Memory Management](memory.md)
 
 # Examples
 
