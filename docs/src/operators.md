@@ -17,4 +17,4 @@ There are a few other operators available as well:
 - The [grid](grid.md) operator `#` is used to iterate over a range of values.
 - The [loop](loop.md) operator `@` is used to repeat an expression based on conditions.
 - The [pattern matching](flow-control.md) operators `=>` and `!>` are used to indicate a true/false match respectively.
-- The [function](functions.md) operator `->` is used to define a function and optional return types.
+- The [function](functions.md) operators `->` and `>>` are used to define a function and optional return types.
