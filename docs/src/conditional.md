@@ -8,7 +8,7 @@ Value matching has the following pattern:
 
 ```go
 expression ? {
-  value: statement
+  value => statement
 }
 ```
 
