@@ -31,11 +31,9 @@ And a more complicated case, assuming a function that returns a tuple:
 // call read function repeatedly, destructuring tuple to data, err captures
 read(100) @ data, err {
   err ? {
-    true => {
-      print(err)
-      break // break out of loop
-    }
-    _ => print(data) // continue is implicit
+    print(err)
+    break // break out of loop
   }
+  print(data) // continue is implicit
 }
 ```

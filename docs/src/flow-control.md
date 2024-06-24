@@ -7,5 +7,6 @@ The operators for flow-control are as follows:
 | Operator | Description |
 |----------|-------------|
 | `?` | Conditional |
+| `=>` | Pattern |
 | `#` | Grid |
 | `@` | Loop |

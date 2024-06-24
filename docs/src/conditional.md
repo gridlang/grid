@@ -1,62 +1,32 @@
 # Conditional
 
-The `?` conditional operator allow us to match on expressions, which replaces the `if`/`else` constructs in most languages. This also applies to return values from functions.
+The `?` conditional operator allows us to match on expressions, replacing the `if`/`else` constructs in most languages. This also includes handling return values from functions.
 
-There are two forms of conditionals available, value-matching, and expression-mapping.
+There are two primary forms of conditionals available: expression-mapping and pattern-matching.
 
-Value matching has the following pattern:
+## Expression Mapping
 
-```go
-expression ? {
-  value => statement
-}
-```
+Expression mapping will evaluate a given expression and map its result to one or more variables. If the expression evaluates to a truthy value, a specified block will be executed.
 
-In this pattern, the result of the expression is used to match against in the following block, by specifying match clauses as literal values.
-
-For example:
-
-```go
-a < b ? {
-  true => print("Less")
-  false => print("More")
-}
-```
-
-Expression mapping has a bit more options, and follows this pattern:
-
+The basic pattern follows:
 ```go
 expression ? variables {
-  expression => statement
+  // statements using variables
 }
 ```
 
-This will map the result of the expression to one or more variables, including potentially destructuring a tuple result. These variables are usable inside the conditional block, allowing for full expressions using those variables to match against.
-
-For example:
-
+### Example:
 ```go
-data = read(f) ? result, err {
-  err => panic(err)
-  _ => return result
-}
-```
-
-This shows how we might call a `read` function which returns a `(str, str)` tuple, destructuring and mapping it to `result` and `err`. Inside the block, we can use the vars in match clauses instead of literal values.
-
-And a bit more complex example:
-
-```go
-// Map function return to a, b
-f() ? a, b {
-  // Assign result of block
-  // Map function return comparison to t
-  h = g(a) > b ? t {
-    // t is truthy
-    t => ...
+read(file) ? data, err {
+  err ? {
+    print(err)
+    return -1
   }
-// map block to x
-} ? x {
-  ...
+  print(data)
 }
 ```
+In this example:
+- The result of `read(file)` is destructured into `data` and `err`.
+- The block executes if the expression evaluates truthy.
+- Within the block, another conditional checks and handles `err`.
+

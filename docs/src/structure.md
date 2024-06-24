@@ -22,7 +22,7 @@ module main
 import hello
 import sys
 
-main = (argc:int, argv:[str]) -> int {
+main = (args:[str]) -> int {
   sys.print(test.greeting)
 }
 ```

@@ -15,6 +15,7 @@
 - [Operators](operators.md)
 - [Flow Control](flow-control.md)
   * [Conditional](conditional.md)
+  * [Pattern](pattern.md)
   * [Grid](grid.md)
   * [Loop](loop.md)
 - [Comprehensions](comprehensions.md)

@@ -6,10 +6,10 @@ For example:
 
 ```go
 numbers = [1,2,3,4,5]
-odds = numbers # _, n {
-  n % 2 => n
-}
 evens = numbers # _, n {
-  n % 2 !> n
+  n % 2 => (0:n)
+}
+odds = numbers # _, n {
+  n % 2 => (1:n)
 }
 ```
