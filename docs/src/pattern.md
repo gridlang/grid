@@ -85,4 +85,3 @@ This example illustrates how you can:
 - Authenticate a user and map the result.
 - Handle errors that occur during authentication.
 - Use pattern matching to execute role-based logic, including fetching and processing data only if the user role matches specific patterns.
-
