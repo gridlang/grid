@@ -16,9 +16,7 @@ Grid provides a variety of operators for use in expressions, with some particula
 | Sequence | `+ - += -=` | array, map | array, map |
 | Type | `& \|` | tuple | tuple |
 
-### Notes
-
-Comparison operators on strings and characters work similarly to other languages. Characters are compared ordinally, with strings being compared for each character in them.
+> Comparison operators on strings and characters work similarly to other languages. Characters are compared ordinally, with strings being compared for each character in them.
 
 Sequence operators work to compose arrays and maps in similar but slightly different ways.
 

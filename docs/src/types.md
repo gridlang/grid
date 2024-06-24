@@ -2,7 +2,7 @@
 
 Grid provides a set of base types that are a core part of the language, accompanied by syntax for specifying literal data of these types.
 
-The following table lists the type pattern, an example literal in Grid syntax, and the default value for the type:
+The following table lists the type pattern, an example literal in Grid syntax, and the default value for the type.
 
 | Type Pattern | Literal Example | Default | Description |
 |--------------|-----------------|---------|-------------|
@@ -19,7 +19,7 @@ The following table lists the type pattern, an example literal in Grid syntax, a
 | `(type) >> type` | `(i:int) >> str` | `()>>()` | Stateful function |
 | `{...}`      | `{ ... }`       | `{}`    | Block |
 
-Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in [pattern matching](pattern.md) or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
+> Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in [pattern matching](pattern.md) or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
 
 ## Truthiness
 

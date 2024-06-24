@@ -32,7 +32,6 @@ If the function returns a value you can assign it in an expression as seen above
 
 When a function is called, any arguments passed into it become variables available to the function's scope, mapped to the names given in the definition. The value of the arguments is used to initialize the variables.
 
-
 ### Example:
 
 The `return` keyword will immediately exit the function, optionally returning a value if the function definition specifies a return type.
