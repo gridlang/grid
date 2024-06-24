@@ -2,7 +2,7 @@
 
 The `@` operator is used to loop over a block, repeating an input expression each iteration, and optionally passing the result of the expression into the block.
 
-Here's the syntax:
+### Syntax:
 
 ```go
 expression @ captures {
@@ -14,7 +14,7 @@ expression @ captures {
 
 This will evaluate the expression before each iteration of the loop body. The `continue` and `break` keywords are used to immediately restart the loop or exit the loop, respectively. Additionally, the `break` keyword can take a value to return from the loop which can be assigned as the result of the loop expression.
 
-For example, a simple case with no capture:
+### Example:
 
 ```go
 a = 0
@@ -25,7 +25,9 @@ a < b @ {
 // a == b
 ```
 
-And a more complicated case, assuming a function that returns a tuple:
+And a more complicated case, assuming a function that returns a tuple.
+
+### Example:
 
 ```go
 // call read function repeatedly, destructuring tuple to data, err captures

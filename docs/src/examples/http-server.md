@@ -45,7 +45,7 @@ handleRequest = (clientSocket: int) -> int {
 }
 
 // Main function to start the HTTP server
-main = (argc: int, argv: [str]) -> int {
+main = (args: [str]) -> int {
   port = 8080
 
   // Open a socket

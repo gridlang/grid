@@ -6,11 +6,11 @@ There are two primary forms of conditionals available: expression-mapping and pa
 
 ## Expression Mapping
 
-Expression mapping will evaluate a given expression and map its result to one or more variables. If the expression evaluates to a truthy value, a specified block will be executed.
+Expression mapping will evaluate a given expression and map its result to optionally captured variables. If the expression evaluates to a truthy value, the specified block will be executed.
 
 The basic pattern follows:
 ```go
-expression ? variables {
+expression ? captures {
   // statements using variables
 }
 ```

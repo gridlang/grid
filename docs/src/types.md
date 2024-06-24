@@ -15,8 +15,8 @@ The following table lists the type pattern, an example literal in Grid syntax, a
 | `<type:type>`| `<"x": 1, "y": 2>` | `<>`| Map of type to type |
 | `(type,type)`| `(1, "2", [3])` | `()`    | Anonymous tuple of types |
 | `(name:type)`| `(x:1, y:"2", z:[3])` | `(field:default)` | Structured tuple of types |
-| `(type) -> type` | `(i:int) -> str` | `()->` | Function |
-| `(type) >> type` | `(i:int) >> str` | `()>>` | Stateful function |
+| `(type) -> type` | `(i:int) -> str` | `()->()` | Function |
+| `(type) >> type` | `(i:int) >> str` | `()>>()` | Stateful function |
 | `{...}`      | `{ ... }`       | `{}`    | Block |
 
 Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
@@ -52,7 +52,7 @@ Anonymous tuple literals can be assigned to variables or used as type definition
 
 ```go
 a = (1, "2", [3])
-f = (g:(int, str)) -> {
+f = (g:(int, str)) -> () {
   print(g.0) // prints 1
 }
 f((1, "2"))
@@ -76,10 +76,10 @@ By assigning a structural tuple a name, we can use the name as a custom type in 
 
 ```go
 Person = (name: str, age: int)
-f = (p: Person) -> {
+f = (p: Person) -> () {
   print(`{p.name}: {p.age}`) // uses the Person structure
 }
-p = Person(name:"Bob", age:32)
+p = Person(name:"Bob", age:35)
 f(p)
 ```
 
@@ -106,19 +106,19 @@ Structured typing in Grid ensures that types interact seamlessly across differen
 ```go
 Person = (name: str, age: int)
 Employee = Person & (id: int, job: str)
-printPerson = (p: Person) -> {
+printPerson = (p: Person) -> () {
   print(`{p.name}: {p.age}`)
 }
 
-e = Employee(id: 1, name: "Bob", age: 32, job: "Manager")
+e = Employee(id: 1, name: "Bob", age: 35, job: "Manager")
 printPerson(e) // valid because Employee is compatible with Person
 ```
 
-### Block
+## Block
 
 Blocks in Grid are represented by `{...}` and can form various types of data structures or executable code sequences. Blocks have a value they resolve to, and can thus be assigned to variables. The last expression or value in a block is used as its effective value in larger expressions.
 
-#### Example:
+### Example:
 
 ```go
 dataProcessor = {

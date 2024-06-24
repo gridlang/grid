@@ -11,7 +11,7 @@ funcname = (name:type) -> type {
 The minimum required syntax with no inputs or outputs is:
 
 ```go
-funcname = () -> {
+funcname = () -> () {
   // ...
 }
 ```
