@@ -117,7 +117,7 @@ printPerson = (p: Person) -> () {
 }
 
 e = Employee(id: 1, name: "Bob", age: 35, job: "Manager")
-printPerson(e) // valid because Employee is compatible with Person
+printPerson(e) // valid because Employee intersects with Person
 ```
 
 ## Block
