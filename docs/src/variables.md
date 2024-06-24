@@ -15,4 +15,4 @@ A name and value are required. The type is based on the right-hand side of the a
 
 The left-hand side can optionally be a list of names, which are used to *destructure* a [tuple](types.md) on the right-hand side. This is useful for extracting fields from function returns, for example.
 
-> If an assignment is the last statement in a block, the assigned value is considered the [block's](scope.md) effective value.
+> If an assignment is the last statement in a block, the assigned value is considered the effective value of the [block](scope.md).
