@@ -116,7 +116,7 @@ printPerson(e) // valid because Employee is compatible with Person
 
 ## Block
 
-Blocks in Grid are represented by `{...}` and can contains various types statements. Blocks have a value they resolve to, and can thus be assigned to [variables](variables.md). The last expression or value in a block is used as its effective value in larger expressions.
+Blocks in Grid are represented by `{...}` and can contains various types of statements. Blocks have a value they resolve to, and can thus be assigned to [variables](variables.md). The last expression or value in a block is used as its effective value in larger expressions.
 
 ### Example:
 
