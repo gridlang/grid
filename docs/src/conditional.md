@@ -2,17 +2,21 @@
 
 The `?` conditional operator allows us to match on expressions, replacing the `if`/`else` constructs in most languages. This also includes handling return values from functions.
 
-There are two primary forms of conditionals available: expression-mapping and [pattern-matching](pattern.md).
-
 ## Expression Mapping
 
-Expression mapping will evaluate a given expression and map its result to optionally captured variables. If the expression evaluates to a truthy value, the specified block will be executed.
+Expression mapping will evaluate a given expression and map its result to optionally captured variables. If the expression evaluates to a truthy value, the attached block will be executed.
+
+Additional conditions can be attached using `?!`. If no expression is given, it serves as a final `else` block.
 
 ### Syntax:
 
 ```go
 expression ? captures {
-  // statements using variables
+  // if
+} expression ?! captures {
+  // else if
+} ?! {
+  // else
 }
 ```
 
