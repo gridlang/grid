@@ -5,7 +5,7 @@ Grid is a high-level language using a mix of imperative and functional construct
 ## Goals
 
 - Reducing the amount of boilerplate required for powerful constructs
-- Structural typing with types
+- Structural typing with custom types
 - Pattern matching conditionals
 - Clear type-truthiness
 - Scope-based memory management without explicit ownership or lifetime tracking
