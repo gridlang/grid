@@ -70,7 +70,7 @@ p = Person(name:"Alice", age:42)
 print(p.name) // prints "Alice"
 ```
 
-By assigning a structural tuple a name, we can use the name as a custom type in other tuples.
+By assigning a name to a structural tuple, we can use that name as a custom type in other tuples.
 
 ### Example:
 
@@ -100,6 +100,12 @@ e = b | c // (s: str)
 ## Structured Typing
 
 Structured typing in Grid ensures that types interact seamlessly across different contexts, such as function definitions and arguments.
+
+Using the type composition operators, we can define how composite types are evaluated in function arguments as follows:
+
+> A type is structurally valid as an argument to a function if the intersection of the argument's type and the function's definition results in a type matching the function definition.
+
+In other words, the type of an argument is valid as long as it has at least the same fields as the function's definition requires for that argument.
 
 ### Example:
 
