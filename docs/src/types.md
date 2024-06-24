@@ -31,6 +31,8 @@ Grid evaluates truthiness based on default values. Defaults are considered `fals
 s = ""
 s ? {
   print("String is non-empty")
+} ?! {
+  print("String is empty")
 }
 ```
 
@@ -39,6 +41,8 @@ This is equivalent to:
 s = ""
 s != "" ? {
   print("String is non-empty")
+} ?! {
+  print("String is empty")
 }
 ```
 
