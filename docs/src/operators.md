@@ -27,8 +27,8 @@ Sequence operators work to compose arrays and maps in similar but slightly diffe
 [1, 2] + [3, 4] // [1, 2, [3, 4]]
 [1, 2] - 1 // [2]
 
-{"a": 1} + {"b": 2} // {"a": 1, "b", 2}
-{"a": 1, "b": 2} - {"b": 2} // {"a": 1}
+<"a": 1> + <"b": 2> // <"a": 1, "b", 2>
+<"a": 1, "b": 2> - "b" // <"a": 1>
 ```
 
 ## Statements
