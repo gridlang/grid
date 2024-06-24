@@ -37,4 +37,4 @@ greeting = "Hello, world!"
 
 Then compiling and running the project will print the line "Hello, world!" as you might expect.
 
-The `main` module is special as it is where a `main` function must be defined, and is where execution of your program will begin. The `main` function always takes two arguments -- the length of the program arguments, and an array of the arguments -- and must return an integer -- the exit code for the program.
+The `main` module is special as it is where a `main` function must be defined, and is where execution of your program will begin. The `main` function always takes one argument -- an array of the arguments -- and must return an integer -- the exit code for the program.
