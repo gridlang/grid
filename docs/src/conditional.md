@@ -2,7 +2,7 @@
 
 The `?` conditional operator allows us to match on expressions, replacing the `if`/`else` constructs in most languages. This also includes handling return values from functions.
 
-There are two primary forms of conditionals available: expression-mapping and pattern-matching.
+There are two primary forms of conditionals available: expression-mapping and [pattern-matching](pattern.md).
 
 ## Expression Mapping
 
