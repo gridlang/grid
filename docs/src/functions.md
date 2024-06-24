@@ -79,7 +79,7 @@ We can think of this as returning an instance or copy of the stateful function t
 
 Calling the returned function will repeat the function body each time, passing back execution and values on `yield`, and resuming from that point when repeated again.
 
-For example:
+### Example:
 
 ```go
 color = cycle(["red", "green", "blue"]) // Initialize
@@ -90,7 +90,9 @@ color() // "blue"
 color() // "red"
 ```
 
-Lastly, we can create another function with different initializers with the same syntax:
+### Example:
+
+We can create another function with different initializers with the same syntax.
 
 ```go
 names = cycle(["bob", "alice"])
