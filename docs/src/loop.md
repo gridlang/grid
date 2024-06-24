@@ -24,9 +24,9 @@ The simplest form of loop has no expression and no captures, equivalent to a `lo
 @ { ... }
 ```
 
-When an expression is given, the loop will evaluate the expression before each iteration of the loop body. 
-
 ### Example:
+
+When an expression is given, the loop will evaluate the expression before each iteration of the loop body. 
 
 ```go
 a = 0
@@ -37,9 +37,9 @@ a < b @ {
 // a == b
 ```
 
-And a more complicated case, assuming a function that returns a tuple.
-
 ### Example:
+
+And a more complicated case, assuming a function that returns a tuple.
 
 ```go
 // call read function repeatedly, destructuring tuple to data, err captures

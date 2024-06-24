@@ -1,6 +1,8 @@
 # Variables
 
-Variables are handles to data of a type. They are declared using the following syntax:
+Variables are handles to data of a type.
+
+### syntax:
 
 ```go
 name, name = expression

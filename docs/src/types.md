@@ -19,11 +19,11 @@ The following table lists the type pattern, an example literal in Grid syntax, a
 | `(type) >> type` | `(i:int) >> str` | `()>>()` | Stateful function |
 | `{...}`      | `{ ... }`       | `{}`    | Block |
 
-Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in pattern matching or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
+Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in [pattern matching](pattern.md) or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
 
 ## Truthiness
 
-Grid evaluates truthiness based on default values. Defaults are considered `false`, whereas non-default values are considered `true`. This allows for simple and clear conditional syntax without ambiguity or type coercion. A tuple of all default values is also considered `false`, whereas a tuple with any non-default values is considered `true`.
+Grid evaluates truthiness based on default values. Defaults are considered `false`, whereas non-default values are considered `true`. This allows for simple and clear [conditional](conditional.md) syntax without ambiguity or type coercion. A tuple of all default values is also considered `false`, whereas a tuple with any non-default values is considered `true`.
 
 ### Example:
 
@@ -116,7 +116,7 @@ printPerson(e) // valid because Employee is compatible with Person
 
 ## Block
 
-Blocks in Grid are represented by `{...}` and can form various types of data structures or executable code sequences. Blocks have a value they resolve to, and can thus be assigned to variables. The last expression or value in a block is used as its effective value in larger expressions.
+Blocks in Grid are represented by `{...}` and can contains various types statements. Blocks have a value they resolve to, and can thus be assigned to [variables](variables.md). The last expression or value in a block is used as its effective value in larger expressions.
 
 ### Example:
 

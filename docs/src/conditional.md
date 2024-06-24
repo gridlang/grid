@@ -8,7 +8,8 @@ There are two primary forms of conditionals available: expression-mapping and pa
 
 Expression mapping will evaluate a given expression and map its result to optionally captured variables. If the expression evaluates to a truthy value, the specified block will be executed.
 
-The basic pattern follows:
+### Syntax:
+
 ```go
 expression ? captures {
   // statements using variables
@@ -25,6 +26,7 @@ read(file) ? data, err {
   print(data)
 }
 ```
+
 In this example:
 - The result of `read(file)` is destructured into `data` and `err`.
 - The block executes if the expression evaluates truthy.

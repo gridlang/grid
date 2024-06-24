@@ -1,6 +1,8 @@
 # Structure
 
-A grid program can be split into multiple source files called modules that serve to group files into namespaces. A source file has the following structure:
+A grid program can be split into multiple source files called modules that serve to group files into namespaces.
+
+### Syntax:
 
 ```go
 module name
@@ -14,7 +16,9 @@ The only required module in a project is `main`, which must exist in at least on
 
 Importing a module makes its contents available in the current module via namespacing and the [member](operators.md) operator `.`
 
-If we have the following module named `main.grid` for example:
+### Example:
+
+If we have the following module named `main.grid`.
 
 ```go
 module main
@@ -27,7 +31,7 @@ main = (args:[str]) -> int {
 }
 ```
 
-And we have another module `hello.grid` with the following:
+And we have another module `hello.grid.
 
 ```go
 module hello

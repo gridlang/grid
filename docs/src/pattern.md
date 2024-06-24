@@ -1,6 +1,8 @@
 # Pattern Matching
 
-Pattern matching provides a more granular control by evaluating an expression and optionally capturing its result to variables, then matching against specific patterns. It follows this pattern:
+Pattern matching provides a more granular control by evaluating an expression and optionally capturing its result to [variables](variables.md), then matching against specific patterns.
+
+### Syntax:
 
 ```go
 expression => captures (
@@ -18,7 +20,7 @@ expression => captures (
 
 ### Example:
 
-Here is an example demonstrating the use of pattern matching with multiple conditions:
+Here is an example demonstrating the use of pattern matching with multiple conditions
 
 ```go
 httpGet(url) => response, status (

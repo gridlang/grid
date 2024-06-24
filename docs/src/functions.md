@@ -1,6 +1,8 @@
 # Functions
 
-Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out. They are defined as follows:
+Functions are a way to define a named unit of code which can be called later, optionally passing data into it, and optionally receiving data back out.
+
+### Syntax:
 
 ```go
 funcname = (name:type) -> type {
@@ -8,7 +10,7 @@ funcname = (name:type) -> type {
 }
 ```
 
-The minimum required syntax with no inputs or outputs is:
+This is the minimum required syntax with no inputs or outputs.
 
 ```go
 funcname = () -> () {
@@ -18,7 +20,7 @@ funcname = () -> () {
 
 ## Calling
 
-Functions are called with a similar syntax:
+Functions are called with a similar syntax.
 
 ```go
 varname = funcname(argument)
@@ -30,7 +32,10 @@ If the function returns a value you can assign it in an expression as seen above
 
 When a function is called, any arguments passed into it become variables available to the function's scope, mapped to the names given in the definition. The value of the arguments is used to initialize the variables.
 
-The `return` keyword will immediately exit the function, optionally returning a value if the function definition specifies a return type:
+
+### Example:
+
+The `return` keyword will immediately exit the function, optionally returning a value if the function definition specifies a return type.
 
 ```go
 returnInt = () -> int {
@@ -44,7 +49,9 @@ i = returnInt()
 
 In many languages there is the concept of a closure, which is a function that encloses the scope it's defined in, essentially capturing state. Grid has a similar feature but it's implemented in a way that's easier to reason about, in the form of ***stateful functions***.
 
-Stateful functions are defined with this pattern:
+### Syntax:
+
+Stateful functions are defined with this pattern.
 
 ```go
 f = (name:type) >> type {
@@ -54,7 +61,7 @@ f = (name:type) >> type {
 
 Just like `return`, the `yield` keyword will also exit a stateful function, optionally returning a value, but the state of the function's execution will be retained at the location of the yield if the function is defined as stateful.
 
-If we have the following function for example:
+### Example:
 
 ```go
 cycle = (items: [str]) >> str {
