@@ -2,7 +2,7 @@
 
 Variables are handles to data of a type.
 
-### syntax:
+### Syntax:
 
 ```go
 name, name = expression
