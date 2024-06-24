@@ -6,6 +6,7 @@
 
 - [Structure](structure.md)
 - [Scope](scope.md)
+- [Keywords](keywords.md)
 
 # Language Features
 
