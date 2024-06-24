@@ -58,8 +58,10 @@ If we have the following function for example:
 
 ```go
 cycle = (items: [str]) >> str {
-  items # index, item {
-    yield item
+  @ {
+    items # index, item {
+      yield item
+    }
   }
 }
 ```

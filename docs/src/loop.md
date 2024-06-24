@@ -1,6 +1,6 @@
 # Loop
 
-The `@` operator is used to loop over a block, repeating an input expression each iteration, and optionally passing the result of the expression into the block.
+The `@` operator is used to loop over a block, repeating an optional input expression each iteration, and optionally passing the result of the expression into the block.
 
 ### Syntax:
 
@@ -12,7 +12,19 @@ expression @ captures {
 }
 ```
 
-This will evaluate the expression before each iteration of the loop body. The `continue` and `break` keywords are used to immediately restart the loop or exit the loop, respectively. Additionally, the `break` keyword can take a value to return from the loop which can be assigned as the result of the loop expression.
+The `continue` and `break` keywords are used to immediately restart the loop or exit the loop, respectively. Additionally, the `break` keyword can take a value to return from the loop which can be assigned as the result of the loop expression.
+
+> Note that without a `break` keyword a loop will never exit.
+
+The simplest form of loop has no expression and no captures, equivalent to a `loop`, `do`, or `while True` in other languages.
+
+### Example:
+
+```go
+@ { ... }
+```
+
+When an expression is given, the loop will evaluate the expression before each iteration of the loop body. 
 
 ### Example:
 
