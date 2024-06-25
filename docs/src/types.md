@@ -11,7 +11,7 @@ The following table lists the type pattern, an example literal in Grid syntax, a
 | `num`        | `-1.23e4`       | `0.0`   | Real number |
 | `char`       | `'z'`           | `''`    | Single character |
 | `str`        | `"hello"`       | `""`    | String of characters |
-| `lit`        | ``` `{expr}` ``` | ``` `` ``` | Interpolation string |
+| ``` `{expr}` ``` | ``` `{f()}` ``` | ``` `` ``` | Interpolation string |
 | `[type]`     | `[1, 2, 3]`     | `[]`    | Array of type |
 | `<type:type>`| `<"x": 1, "y": 2>` | `<>`| Map of type to type |
 | `(type,type)`| `(1, "2", [3])` | `()`    | Anonymous tuple of types |
