@@ -11,6 +11,7 @@ The following table lists the type pattern, an example literal in Grid syntax, a
 | `num`        | `-1.23e4`       | `0.0`   | Real number |
 | `char`       | `'z'`           | `''`    | Single character |
 | `str`        | `"hello"`       | `""`    | String of characters |
+| `lit`        | ``` `{expr}` ``` | ``` `` ``` | Interpolation string |
 | `[type]`     | `[1, 2, 3]`     | `[]`    | Array of type |
 | `<type:type>`| `<"x": 1, "y": 2>` | `<>`| Map of type to type |
 | `(type,type)`| `(1, "2", [3])` | `()`    | Anonymous tuple of types |
@@ -42,6 +43,17 @@ s != "" ? {
   true => print("String is non-empty")
   false => print("String is empty")
 }
+```
+
+## Interpolation
+
+String interpolation literals can be used to insert the results of expressions into a string inline.
+
+### Example:
+```go
+a = 0
+c = 'z'
+print(`a = {a}, c = {c}`)
 ```
 
 ## Tuples
