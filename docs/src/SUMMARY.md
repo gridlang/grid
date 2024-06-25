@@ -15,7 +15,7 @@
 - [Variables](variables.md)
 - [Memory Management](memory.md)
 - [Operators](operators.md)
-- [Pattern](pattern.md)
+- [Pattern Matching](pattern.md)
 - [Flow Control](flow-control.md)
   - [Conditional](conditional.md)
   - [Grid](grid.md)
