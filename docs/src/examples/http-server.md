@@ -6,34 +6,36 @@ module main
 import sys
 
 indexOf = (s: str, t: char) -> int {
-  s # i, c {
-    c => (t:return i)
+  s # {
+    i, c => c == t ? {
+      true => return i
+    }
   }
 }
 
 // Function to handle HTTP requests
 handleRequest = (clientSocket: int) -> int {
   // Read the request from the client
-  request = sys.read(clientSocket, 1024) ? result, err {
-    err ? {
+  request = sys.read(clientSocket, 1024) ? { // (data, err)
+    _, err => {
       sys.print("Error reading request")
       return -1
     }
-    result
+    data, _ => data
   }
 
   // Parse the HTTP verb from the request
-  request[0:indexOf(request, ' ')] => (
+  request[0:indexOf(request, ' ')] ? {
     // Match the verb and respond accordingly
-    "GET": {
+    "GET" => {
       response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, GET request!"
       sys.write(clientSocket, response)
-    },
-    "POST": {
+    }
+    "POST" => {
       response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello, POST request!"
       sys.write(clientSocket, response)
-    },
-    _: {
+    }
+    _ => {
       response = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\n\r\nMethod Not Allowed"
       sys.write(clientSocket, response)
     }
@@ -49,25 +51,25 @@ main = (args: [str]) -> int {
   port = 8080
 
   // Open a socket
-  serverSocket = sys.socket(sys.AF_INET, sys.SOCK_STREAM, 0) ? sock, err {
-    err ? {
+  serverSocket = sys.socket(sys.AF_INET, sys.SOCK_STREAM, 0) ? { // (sock, err)
+    _, err => {
       sys.print("Error creating socket")
       return -1
     }
-    sock
+    sock, _ => sock
   }
 
   // Bind the socket to the port
-  sys.bind(serverSocket, sys.sockaddr_in(port, sys.INADDR_ANY)) ? err {
-    err ? {
+  sys.bind(serverSocket, sys.sockaddr_in(port, sys.INADDR_ANY)) ? { // err
+    err => {
       sys.print("Error binding socket")
       return -1
     }
   }
 
   // Listen for incoming connections
-  sys.listen(serverSocket, 5) ? err {
-    err ? {
+  sys.listen(serverSocket, 5) ? { // err
+    err => {
       sys.print("Error listening on socket")
       return -1
     }
@@ -76,19 +78,20 @@ main = (args: [str]) -> int {
   sys.print("Server listening on port ", port)
 
   // Accept connections in a loop
-  sys.closed(serverSocket) @ closed {
-    closed ? break
-
-    clientSocket = sys.accept(serverSocket) ? sock, err {
-      err ? {
-        sys.print("Error accepting connection")
-        break
+  sys.closed(serverSocket) @ { // bool
+    true => break
+    _ => {
+      clientSocket = sys.accept(serverSocket) ? { // (sock, err)
+        _, err => {
+          sys.print("Error accepting connection")
+          break
+        }
+        sock, _ => sock
       }
-      sock
-    }
 
-    // Handle the request in a separate function
-    handleRequest(clientSocket)
+      // Handle the request in a separate function
+      handleRequest(clientSocket)
+    }
   }
 
   // Close the server socket

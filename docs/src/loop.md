@@ -1,14 +1,12 @@
 # Loop
 
-The `@` operator is used to loop over a block, repeating an optional input expression each iteration, and optionally passing the result of the expression into the block.
+The `@` operator is used to loop over a pattern match, repeating an optional input expression each iteration.
 
 ### Syntax:
 
 ```go
-expression @ captures {
-  // statements
-  continue // continue the loop
-  break // break the loop
+expression @ {
+  pattern => ...
 }
 ```
 
@@ -16,7 +14,7 @@ The `continue` and `break` keywords are used to immediately restart the loop or 
 
 > Without a `break` keyword a loop will never exit.
 
-The simplest form of loop has no expression and no captures, equivalent to a `loop`, `do`, or `while True` in other languages.
+The simplest form of loop has no expression, equivalent to a `loop`, `do`, or `while True` in other languages.
 
 ### Example:
 
@@ -32,7 +30,8 @@ When an expression is given, the loop will evaluate the expression before each i
 a = 0
 b = 5
 a < b @ {
-  a += 1
+  true => a += 1
+  false => break
 }
 // a == b
 ```
@@ -42,12 +41,12 @@ a < b @ {
 And a more complicated case, assuming a function that returns a tuple.
 
 ```go
-// call read function repeatedly, destructuring tuple to data, err captures
-read(100) @ data, err {
-  err ? {
+// call read function repeatedly
+read(100) @ { // returns (data, err)
+  _, err => {
     print(err)
     break // break out of loop
   }
-  print(data) // continue is implicit
+  data, _ => print(data) // continue is implicit
 }
 ```

@@ -13,14 +13,13 @@
 - [Functions](functions.md)
 - [Types](types.md)
 - [Variables](variables.md)
-- [Operators](operators.md)
-- [Flow Control](flow-control.md)
-  * [Conditional](conditional.md)
-  * [Pattern](pattern.md)
-  * [Grid](grid.md)
-  * [Loop](loop.md)
-- [Comprehensions](comprehensions.md)
 - [Memory Management](memory.md)
+- [Operators](operators.md)
+- [Pattern](pattern.md)
+- [Flow Control](flow-control.md)
+  - [Conditional](conditional.md)
+  - [Grid](grid.md)
+  - [Loop](loop.md)
 
 # Examples
 

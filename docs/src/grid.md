@@ -8,14 +8,20 @@ The `#` operator -- also known as the Grid operator -- is used to iterate over t
 |`[type]`|`type`|
 |`{key:value}`|`(key, value)`|
 
-An example is:
+### Syntax:
 
 ```go
-expression # indexvar, itemvar {
-  // statements
+expression # {
+  patterns
 }
 ```
 
-For each item in the input, it will be mapped to the capture and execute the block.
+For each item in the input, the grid operator will generate an `(index, item)` tuple. The `index` field is an `int`, and the `item` field's type depends on the input type. If only one capture variable is mapped, its type will be `(int, _)`. If you provide an index variable and item variable, it will be destructured to those variables accordingly.
 
-As indicated in the example, the grid operator will generate an index (int) and item (depending on input type). If only one capture variable is provided, its type will be `(int, _)` where the item type depends on the input as listed above. If you provide an index variable and item variable, it will be destructured to those variables accordingly.
+### Example:
+
+```go
+[1, 2, 3] # {
+  i, n => print(`Item {i} = {n}`)
+}
+```

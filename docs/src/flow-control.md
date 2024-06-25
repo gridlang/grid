@@ -1,12 +1,11 @@
 # Flow Control
 
-Grid provides a few flow-control constructs which are covered in detail in the following sections.
-
-The operators for flow-control are as follows:
+Grid provides a few flow-control operators which are covered in detail in the following sections.
 
 | Operator | Description |
 |----------|-------------|
 | `?` | Conditional |
-| `=>` | Pattern |
 | `#` | Grid |
 | `@` | Loop |
+
+Each of these operators takes in put expression, and contains a pattern matching expression following it.

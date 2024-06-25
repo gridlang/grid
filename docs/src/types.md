@@ -30,9 +30,8 @@ Grid evaluates truthiness based on default values. Defaults are considered `fals
 ```go
 s = ""
 s ? {
-  print("String is non-empty")
-} ?! {
-  print("String is empty")
+  true => print("String is non-empty")
+  false => print("String is empty")
 }
 ```
 
@@ -40,9 +39,8 @@ This is equivalent to:
 ```go
 s = ""
 s != "" ? {
-  print("String is non-empty")
-} ?! {
-  print("String is empty")
+  true => print("String is non-empty")
+  false => print("String is empty")
 }
 ```
 

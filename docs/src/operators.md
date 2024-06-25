@@ -6,6 +6,7 @@ Grid provides a variety of operators for use in expressions, with some particula
 
 | Category | Operators | Input Types | Output Types |
 |----------|-----------|-------------|-------------|
+| Truthiness | `><` | any | bool |
 | Equality | `== !=` | any | bool |
 | Comparison | `< <= >= >` | int, float, char, str | bool |
 | Boolean | `&& \|\| !` | bool | bool |
@@ -16,7 +17,23 @@ Grid provides a variety of operators for use in expressions, with some particula
 | Sequence | `+ - += -=` | array, map | array, map |
 | Type | `& \|` | tuple | tuple |
 
-> Comparison operators on strings and characters work similarly to other languages. Characters are compared ordinally, with strings being compared for each character in them.
+> There are no type coercions in Grid, so all inputs to expression operators must be the same types, with the exception of the Truthiness operator.
+
+### Truthiness
+
+The truthiness operator compares whether the two inputs have equivalent [truthiness](types.md), returning a `true` or `false` bool accordingly.
+
+### Equality
+
+Equality operators compare the values of inputs directly, as you might expect.
+
+### Comparison
+
+Comparison operators work similarly to other languages for numeric types.
+
+Characters are compared ordinally, and strings are compared character by character.
+
+### Sequence
 
 Sequence operators work to compose arrays and maps in similar but slightly different ways.
 

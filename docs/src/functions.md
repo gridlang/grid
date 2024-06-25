@@ -65,8 +65,8 @@ Just like `return`, the `yield` keyword will also exit a stateful function, opti
 ```go
 cycle = (items: [str]) >> str {
   @ {
-    items # index, item {
-      yield item
+    items # {
+      _, item => yield item
     }
   }
 }
