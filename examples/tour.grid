@@ -9,7 +9,7 @@ squares @ { (_, s) => s > 25 ? big += s }     // sum the squares over 25
 
 // fallible + ! propagation
 checked = (n: int) -> int ! str {
-  n > 0 ? n || `not positive: {n}`!
+  n > 0 ? n : `not positive: {n}`!
 }
 v, e = checked(big)
 

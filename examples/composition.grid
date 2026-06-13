@@ -34,14 +34,10 @@ take = (xs: [int], k: int) >> int { xs @ { (i, x) => i < k ? >> x } }
 first_three_evens = take(evens(1..100), 3) # { (_, n) => n }
 //    [2, 4, 6]
 
-// 7) GUARD + MATCH in one block — infix-? guard arms and a => wildcard arm,
-//    side by side; the first present arm wins.
+// 7) CHAINED `?:` — an if / elif / else built from the 2-outcome branch.
+//    `?:` is right-associative, so this reads as a clean elif ladder.
 classify = (n: int) -> str {
-  n ? {
-    n > 99     ? "big"     // guard arm: fires when n > 99 succeeds
-    n % 2 == 0 ? "even"    // guard arm
-    _          => "odd"    // match arm: the topic always matches
-  }
+  n > 99 ? "big" : n % 2 == 0 ? "even" : "odd"
 }
 labelled = 1..6 # { (_, n) => classify(n) }
 //    [odd, even, odd, even, odd, even]

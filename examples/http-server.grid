@@ -95,7 +95,7 @@ main = (args: [str]) -> int {
   addr = args[0] || "0.0.0.0:8080"               // partial index + || selector (Layer 3)
   sys.print(`listening on {addr}\n`)
   _, err = serve(addr)                            // take the fallible pair apart
-  err ? { e => { sys.print(`fatal: {e}\n`); 1 } } || 0
+  err ? { e => { sys.print(`fatal: {e}\n`); 1 } } : 0
 }
 
 // ----------------------------------------------------------------------
@@ -116,7 +116,7 @@ main = (args: [str]) -> int {
 // 6. Dropping a fallible — `handle(c, id)` discards a `() ! str`,
 //    silently swallowing its error. Allowed today; is that intended, or
 //    should an unconsumed fallible be a static complaint?
-// 7. Operator precedence — `err ? {…} || 0` assumes `?` binds tighter
-//    than `||`. No precedence table exists yet.
+// 7. Operator precedence — RESOLVED: `?:` is the loosest operator (the
+//    if-else: `err ? {…} : 0`); `||` is a pure value-selector, not an else.
 // 8. Inline `;` — used in `{ sys.print(…); 1 }`. Decide: same-line
 //    separator, or newline-only?

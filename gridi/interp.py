@@ -256,11 +256,11 @@ def eval_node(node, env, topic):
         return eval_bin(node, env, topic)
     if t is Try:
         subj = eval_node(node.subj, env, topic)
-        if not present(subj):
-            return UNIT
-        if type(node.cons) is Block:
-            return eval_match_block(node.cons, Env(env), subj)
-        return eval_node(node.cons, env, subj)
+        if present(subj):                              # then-branch; topic = subject (if-let)
+            return _eval_branch(node.cons, env, subj)
+        if node.els is not None:                       # else-branch; cond absent -> ambient topic
+            return _eval_branch(node.els, env, topic)
+        return UNIT
     if t is Iter:
         return eval_iter(node, env, topic)
     if t is Match:
@@ -397,19 +397,33 @@ def eval_bin(node, env, topic):
     raise RuntimeError(f"unknown operator {op}")
 
 
+def _eval_branch(node, env, topic):
+    # a `?` / `?:` branch: a block runs in a fresh scope; anything else evaluates in place
+    if type(node) is Block:
+        return eval_scope_block(node, Env(env), topic)
+    return eval_node(node, env, topic)
+
+
 def eval_scope_block(block, env, topic):
+    # A block is one scope, run as a sequence. A matching `=>` arm commits the block —
+    # it returns the arm's result immediately, even if that result is `()`; a non-matching
+    # arm yields `()` and is transparent. The topic threads as the last *present* value
+    # (so arms compose on one subject, and a value-producing statement can set it); the
+    # block's return is its last value (here `()` is NOT transparent — a trailing `()`
+    # still returns `()`, which is what lets an `@` body force "continue").
     val = UNIT
+    cur = topic
     for item in block.items:
-        val = eval_node(item, env, topic)
+        if type(item) is Match:
+            sub = Env(env)
+            if match_pat(item.pat, cur, sub):
+                return eval_node(item.res, sub, cur)
+            val = UNIT
+        else:
+            val = eval_node(item, env, cur)
+            if present(val):
+                cur = val
     return val
-
-
-def eval_match_block(block, env, topic):
-    for item in block.items:
-        val = eval_node(item, Env(env), topic)
-        if present(val):
-            return val
-    return UNIT
 
 
 def _source_items(v):

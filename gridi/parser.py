@@ -36,7 +36,7 @@ class Bin:       op: str; l: object; r: object
 @dataclass
 class Range:     lo: object; hi: object               # a .. b (inclusive)
 @dataclass
-class Try:       subj: object; cons: object
+class Try:       subj: object; cons: object; els: object = None   # cond ? cons [: els]
 @dataclass
 class Iter:      op: str; subj: object; block: object   # op in {"#", "@"}; subj may be None
 @dataclass
@@ -232,7 +232,7 @@ class Parser:
             op = self.eat("INPLACE").val[0]
             self.nl()
             return InPlace(name, op, self.parse_comb())
-        return self.parse_comb()
+        return self.parse_ternary()
 
     def parse_type(self):
         # types are not checked at runtime — skip a type expression by tokens,
@@ -265,7 +265,31 @@ class Parser:
         if self.at("PUNCT", "~"):                   # prefix ~ : defer to scope exit
             self.eat("PUNCT", "~"); self.nl()
             return Defer(self.parse_expr())
-        return self.parse_or()
+        return self.parse_ternary()
+
+    def parse_ternary(self):
+        # `?:` is the loosest operator, right-associative. The condition and both
+        # branches accept full expressions (=> / || / && / combinators all bind tighter).
+        cond = self.parse_match()
+        if not self.at("PUNCT", "?"):
+            return cond
+        self.eat("PUNCT", "?"); self.nl()
+        cons = self.parse_block() if self.at("PUNCT", "{") else self.parse_consequent()
+        els = None
+        if self.at("PUNCT", ":"):
+            self.eat("PUNCT", ":"); self.nl()
+            els = self.parse_block() if self.at("PUNCT", "{") else self.parse_consequent()
+        return Try(cond, cons, els)
+
+    def parse_match(self):
+        # `=>` is an ordinary operator just under `?:`: a pattern on the left, and a full
+        # expression on the right (arm-result form — allows `+=` / `>>` / `~`). So a bare
+        # `pat => result` works anywhere an expression does, e.g. `f() ? x => g(x) : h()`.
+        left = self.parse_or()
+        if self.at("FATARROW"):
+            self.eat("FATARROW"); self.nl()
+            return Match(self.to_pattern(left), self.parse_arm_result())
+        return left
 
     def parse_or(self):
         l = self.parse_and()
@@ -284,11 +308,7 @@ class Parser:
     def parse_comb(self):
         left = self.parse_cmp()
         while True:
-            if self.at("PUNCT", "?"):
-                self.eat("PUNCT", "?"); self.nl()
-                cons = self.parse_block() if self.at("PUNCT", "{") else self.parse_consequent()
-                left = Try(left, cons)
-            elif self.at("PUNCT", "#") or self.at("PUNCT", "@"):
+            if self.at("PUNCT", "#") or self.at("PUNCT", "@"):
                 op = self.eat("PUNCT").val
                 self.nl()
                 left = Iter(op, left, self.parse_block())

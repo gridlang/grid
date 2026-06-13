@@ -6,7 +6,7 @@ unwraps the success or propagates the error. `v, e = f()` destructures the pair.
 """
 from gridi import run, UNIT
 
-HALF = 'half = (n: int) -> int ! str { n % 2 == 0 ? n / 2 || "odd"! }\n'
+HALF = 'half = (n: int) -> int ! str { n % 2 == 0 ? n / 2 : "odd"! }\n'
 QUARTER = HALF + "quarter = (n: int) -> int ! str { h = half(n)!\nhalf(h)! }\n"
 
 
