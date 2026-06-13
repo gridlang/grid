@@ -1,8 +1,10 @@
 """Slice 2: functions + the # / @ triad (map, filter, reduce, find, loop).
 
 Functions are detached scopes; # fans out collecting present results; @ threads
-(present body exits the loop, () continues) — over a collection it iterates,
-over a condition it loops while present. Topic for a list element is (index, element).
+(present body exits the loop, () continues). An expression source is evaluated
+once — a collection iterates, a single value threads once; a literal block source
+is a generator, re-evaluated each pull (the loop form). Topic for a list element
+is (index, element).
 """
 from gridi import run, UNIT
 
@@ -75,23 +77,29 @@ def test_find_not_found_is_unit():
     assert run("[10, 20, 30] @ { (_, x) => x == 99 ? x }") is UNIT
 
 
-def test_while_loop_over_condition():
-    assert run("i: &int = 0\ni < 3 @ { i += 1 }\ni") == 3
+def test_loop_over_block_generator():
+    # A *literal block* source is re-evaluated on each pull: the loop runs while the
+    # block yields present and stops when it yields (). This is the loop / while form.
+    assert run("i: &int = 0\n{ i < 3 } @ { i += 1 }\ni") == 3
 
 
-def test_while_loop_over_collection_valued_condition():
-    # `!=` yields its right operand, so this condition *evaluates to a string*.
-    # @ must still treat it as a condition (loop while present, stop when it goes
-    # ()), decided by the subject's syntax — a relation — not by the runtime type
-    # of its value. (Regression: the old type-guess saw a str, called it a source,
-    # and "iterated" zero characters, so the body never ran.)
+def test_block_generator_with_collection_valued_pull():
+    # The generator yields its value — `!=` returns the string "" — and a present
+    # value continues the loop whatever its type; () stops it. Decided by the block
+    # form, never by the runtime type of the pulled value.
     src = (
         'lines = ["a", "b", "", "c"]\n'
         "i: &int = 0\n"
-        'lines[i] != "" @ { i += 1 }\n'
+        '{ lines[i] != "" } @ { i += 1 }\n'
         "i"
     )
     assert run(src) == 2
+
+
+def test_relation_source_threads_once_not_loops():
+    # An *expression* source is evaluated ONCE — partials: `i < 3` yields 3, threaded
+    # through the body a single time. Without a block source, @ does not loop.
+    assert run("i: &int = 0\ni < 3 @ { i += 1 }\ni") == 1
 
 
 def test_chained_fanout():

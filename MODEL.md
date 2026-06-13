@@ -213,21 +213,23 @@ sum: &int = 0
 nums @ { n => sum += n }     // reduce — sum threads through; afterward it is the total
 ```
 
-What you thread over decides the shape:
+What you thread over decides the shape, and **how the source is driven is read from its
+form** — a literal block is re-run, anything else is run once:
 
-- a **collection** → the block runs once per element — **reduce**;
-- a **condition** (a relational or logical test — `<`, `!=`, `&&`, …) → the input is
-  re-checked each step and the block runs while it holds — **loop**.
+- an **expression source** → evaluated once. A collection iterates element by element
+  (**reduce / find**); a single value threads through the block one time — partials:
+  `a < b` yields `b`, so `a < b @ blk` runs `blk` once on `b`; `()` threads nothing.
+- a **literal block source** `{ … }` → a **generator**: re-evaluated on each pull, looping
+  while it yields present and stopping when it yields `()`. This is the **loop / while** form.
 
 ```
 i: &int = 0
-i < 4 @ { i += 1 }          // loop — runs while i < 4; afterward i is 4
+{ i < 4 } @ { i += 1 }      // loop — the block re-tests i < 4 each pull; afterward i is 4
 ```
 
-Which shape `@` runs is read from the *form* of the subject, not the runtime type of its
-value: a relational/logical test is a condition, anything else is a source. So a test
-whose value is itself a collection — `line != ""` yields the string `""` — still loops;
-it is a relation, not a thing to iterate.
+Nothing inspects the source's runtime type, only its form, so a generator whose pulled
+value is itself a collection — `{ line != "" }` yields the string `""` — still loops; the
+block form, not the value, decides.
 
 Reduce and loop are not two constructs; they are `@` handed two kinds of input. Because
 `@` is sequential, its block *may* write a captured `&` — which is precisely why the
@@ -239,12 +241,14 @@ early-exit-with-a-value are Layer 3 — they need the truthiness machinery.)
 `#` and `@` are the *same* iteration over the *same* kind of block. The only difference
 is **independent vs threaded** — and that is not a new axis; it is Layer 1's
 **read-share** (safe in parallel) versus **write-move** (must run in sequence). The
-substrate already drew the line; the triad just names both sides of it. `?` is the
-degenerate case: zero-or-one blocks — choose one rather than repeat one.
+substrate already drew the line; the triad just names both sides of it. A **generator**
+source — re-evaluated, stateful, order-dependent — is therefore `@`-only; `#` takes a
+materialized source it can fan out in parallel. `?` is the degenerate case: zero-or-one
+blocks — choose one rather than repeat one.
 
 This is the property worth keeping: behavior comes from *what you hand the operator* — a
-collection or a condition, an arm that yields a value or `()`, a block that reads or
-writes — never from flags or modes. Same combinators, composed.
+value source or a generator block, an arm that yields a value or `()`, a block that reads
+or writes — never from flags or modes. Same combinators, composed.
 
 ### What each yields
 
@@ -637,6 +641,15 @@ The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. E
 - **Unconsumed fallibles are allowed (L5).** A `T ! E` or `T | ()` result may simply be
   ignored — it is a value like any other (`handle(c, id)` does). No obligation to handle
   it; a linter may warn later.
+- **Source form decides how `@` drives it (L2, V0).** `@`'s source is driven by its
+  *form*, not its runtime type: a literal block `{ … }` is a **generator** — re-evaluated
+  on each pull, the **loop / while** form — while anything else is evaluated **once** (a
+  collection iterates, a single value threads once, `()` skips). So `{ i < n } @ { … }`
+  loops, but `i < n @ { … }` is the partial `(i < n)` threaded a single time — the
+  compositional reading stays intact and `@` never inspects what its source *is*. Blocks
+  are **sited, not first-class** (V0): a block is driven where it is written and never
+  escapes — no stored or passed generators — which keeps Grid closure-free. (First-class
+  or non-escaping blocks are a deliberate later question, not a V0 feature.)
 - **Loop-continue is explicit (L2/L5).** An `@` body exits on a present value, so an
   effectful body ends in `()` to keep looping. No sugar — the `()` keeps the
   present-vs-nothing rule on the page. This rests on an **invariant**: every continuing
@@ -653,8 +666,8 @@ The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. E
     - *Body-value-is-not-a-signal* — `@` runs only to source-exhaustion / condition-`()`
       and discards the body — is **coherent but collapses the triad**: it makes `@` and
       `#` the same run-to-exhaustion iteration, erasing `@`'s first-success / find
-      meaning, and forces every computed-termination loop through the condition form.
-      (3 tests fail, all the find idiom.)
+      meaning, and forces every computed-termination loop through the generator-block
+      form. (3 tests fail, all the find idiom.)
   Present-exits is the goal-directed reading Grid is built on (typed Icon): `#` drives a
   body to **all** its successes (collect every present), `@` drives it to the **first**
   (find / break-with-value), and reduce is the degenerate case where the body never

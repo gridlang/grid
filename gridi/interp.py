@@ -425,18 +425,6 @@ def _source_items(v):
     return None
 
 
-# An `@` subject that is a relational/logical comparison is a *condition* (loop
-# while present); anything else is a *source* (iterate it). The split is decided
-# by the subject's *syntax* — its node — never by the runtime type of its value,
-# so a condition whose value happens to be a collection (e.g. `a != ""` yields
-# the string `""`) is not mistaken for a source.
-_REL_OPS = frozenset({"==", "!=", "<", "<=", ">", ">=", "&&", "||"})
-
-
-def _is_condition(subj):
-    return isinstance(subj, Bin) and subj.op in _REL_OPS
-
-
 def eval_iter(node, env, topic):
     if node.op == "#":
         src = eval_node(node.subj, env, topic)
@@ -450,31 +438,35 @@ def eval_iter(node, env, topic):
                 out.append(v)
         return out
 
-    # node.op == "@"
-    if node.subj is None:                              # bare @ {}: loop until present
+    # node.op == "@" — thread the body over a source. A present body value exits
+    # the loop with it (find / break); () continues. The source decides iteration,
+    # and how the source is *driven* is read from its form:
+    if node.subj is None:                              # bare @ {}: an always-present source
         while True:
             v = eval_scope_block(node.block, Env(env), UNIT)
             if present(v):
                 return v
 
-    if _is_condition(node.subj):                       # thread while a condition holds
-        cond = eval_node(node.subj, env, topic)
-        while present(cond):
-            v = eval_scope_block(node.block, Env(env), cond)
+    if isinstance(node.subj, Block):                   # a literal block is a generator —
+        while True:                                    # re-evaluated on each pull; () = done
+            step = eval_scope_block(node.subj, Env(env), topic)
+            if not present(step):
+                return UNIT
+            v = eval_scope_block(node.block, Env(env), step)
             if present(v):
                 return v
-            cond = eval_node(node.subj, env, topic)
-        return UNIT
 
-    first = eval_node(node.subj, env, topic)           # thread over a collection
+    first = eval_node(node.subj, env, topic)           # any other source: evaluated once
     items = _source_items(first)
-    if items is None:
+    if items is not None:                              # a collection -> iterate its elements
+        for step in items:
+            v = eval_scope_block(node.block, Env(env), step)
+            if present(v):
+                return v
         return UNIT
-    for step in items:
-        v = eval_scope_block(node.block, Env(env), step)
-        if present(v):
-            return v
-    return UNIT
+    if present(first):                                 # a single value -> thread it once
+        return eval_scope_block(node.block, Env(env), first)
+    return UNIT                                        # () -> nothing to thread
 
 
 def match_pat(pat, topic, env):
