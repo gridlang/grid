@@ -8,8 +8,8 @@
 > 1. The Substrate — ownership = scope = purity  *(done)*
 > 2. The Triad — `?` `#` `@` as the three ways scopes compose  *(done)*
 > 3. Success and Nothing — `()` is the only nothing; every operator partial  *(done)*
-> 4. **Literals & Types** — one symbol, one type  ← *you are here*
-> 5. The grafts — defer, fallibles, streams
+> 4. Literals & Types — one symbol, one type  *(done)*
+> 5. **The grafts** — defer, fallibles, streams  ← *you are here*
 
 ---
 
@@ -467,6 +467,145 @@ required shape — `(name: "Bo", age: 9, id: 1)` is a valid `Person`, because it
 
 ---
 
-*Next — Layer 5: the grafts. Functions in full (named, detached scopes from Layer 1),
-then `~` defer, the `-> T ! E` fallible shorthand over `T | ()`, and stateful `>>`
-streams — the good late ideas, added on top of the keystone rather than into it.*
+## Layer 5 — The Grafts
+
+The keystone is whole. What remains are the good late ideas — and the striking thing is
+how few of them are *new machinery*: most are consequences of the four layers below,
+finally named.
+
+### Functions
+
+A function is the named, **detached** scope of Layer 1: defined here, called elsewhere,
+declaring all its inputs (no closures). Its parameters are a struct (Layer 4); its body
+is a block whose last expression is its value.
+
+```
+add = (x: int, y: int) -> int { x + y }
+add(1, 2)                                  // 3
+
+double = (n: int) -> int { n * 2 }         // a value; the bare name IS the function
+apply  = (f: (int) -> int, n: int) -> int { f(n) }
+apply(double, 5)                           // 10
+```
+
+`x.f(a)` is `f(x, a)` (UFCS) — free functions read as methods on their first argument. A
+function may be **partial** like any operator: `-> T | ()`, or fallible (below), and it
+composes with `?` exactly as primitives do.
+
+### Exits, without keywords
+
+Every exit a language usually spends a keyword on is already here in present-vs-`()` and
+the operators — so Grid keeps none of them.
+
+- **return** — the body's last expression *is* the value. An early value-exit is `!`
+  (below); there is no `return`.
+- **break / continue** — in `@`, a body that yields a **present** value exits the loop
+  with it; a body that yields `()` continues. So a body must produce `()` to loop again
+  — which a binding or an in-place `+=` does naturally — and any real value ends it.
+  `break value` is just "yield a present value"; `continue` is "yield `()`." A bare
+  `@ { … }` is the infinite loop, ended the same way.
+
+```
+find = (xs: [int], t: int) -> int | () {
+  xs @ { x => x == t ? x }     // match -> present x -> exit with x;  else () -> continue
+}                              // run out -> () -> not found
+```
+
+No `break`, no `continue`, no `return`, and `find` reports "not found" as `()` — the
+optional from Layer 3, not a sentinel.
+
+### `~` — defer
+
+Memory needs no cleanup keyword: lifetime is scope (Layer 1), so a value is freed when
+its scope ends. `~` is for *effects* that aren't memory — closing a handle, flushing,
+logging. `~expr` runs when the enclosing scope exits, however it exits, in LIFO order.
+
+```
+serve = (c: Conn) -> () ! Err {
+  ~c.close()                   // runs on every exit path, after the rest
+  greet(c)!
+  pump(c)!
+}
+```
+
+### `-> T ! E` — fallible, over `T | ()`
+
+A no-information failure is already `-> T | ()` (Layer 3). When a failure must carry a
+*reason*, `-> T ! E` is the shorthand: success is a `T`, failure carries an `E`, with the
+error slot being an `E | ()` (present means failed). The postfix `!` consumes it:
+
+```
+read = (path: str)  -> str    ! Err { … }
+load = (path: str)  -> Config ! Err {
+  text = read(path)!           // T on success; on failure, load returns the Err
+  parse(text)!
+}
+
+text, err = read(path)         // or take the pair by hand
+```
+
+`f()!` unwraps to `T` on success, or exits the enclosing function propagating the `E`.
+(`!` is the symbol freed when logical-not left in Layer 3.)
+
+### `>>` — stateful streams
+
+A stateful function is defined with `>>`. Calling it returns a fresh stream **instance**;
+`>> value` emits a value and suspends, resuming there on the next call. And exhaustion
+needs no machinery at all — when the body completes, the stream just yields `()`:
+
+```
+each = (xs: [T]) >> T { xs @ { x => >> x } }   // emit each element, then finish -> ()
+
+s = each([10, 20, 30])         // s : () -> T | ()
+s()                             // 10, then 20, then 30, then () forever
+```
+
+So a stream is simply a function of type `() -> T | ()`, and it plugs straight into the
+triad — `s @ { v => … }` runs until `()`, `s # { v => … }` collects until `()`. The
+"done" flag and the presence pair both evaporate into the one nothing. (`>>` is
+positional: after a parameter list it defines a stream, before a value it emits, between
+two `int`s it is right-shift.)
+
+### Sources — iteration is just "next, or `()`"
+
+The same `()` that ends a stream ends *every* collection. Reaching past the end of a
+list is `xs[len]` — out of bounds — which Layer 3 already makes `()`. So iteration needs
+no length, no `hasNext`, no bounds check: you take the next, and stop when it is `()`.
+This is `car`/`cdr` against `nil`, with `()` as the nil.
+
+So a **source** is anything that yields *next-or-`()`* — a list, a tuple, a map, a
+range, a stream alike — and the triad iterates any of them through that one interface:
+
+- `@` threads over **any** source, one at a time, stopping at `()` — including a live
+  stream;
+- `#` fans out over a source whose elements are already present (list, tuple, map); a
+  stream is drained first, since you cannot fan out what has not yet been produced.
+
+A collection and a stream are the same thing to `?` `#` `@`: a source you pull from until
+nothing comes back. (This is the third role `()` absorbs — failure, exhaustion, and now
+end-of-iteration — and it is Icon's generators, the last of the three echoes.)
+
+### Modules (in brief)
+
+`module name` and `import path` at a file's head are the only declarations outside
+expression space. Module-scope labels are constants — immutable, shared everywhere
+(Layer 1). (A fuller treatment is its own document.)
+
+---
+
+### The whole model, in one breath
+
+Five layers, each falling out of the one beneath:
+
+1. a **scope is an ownership boundary** — handles, the immutability hinge, holes inferred
+   by one rule;
+2. the **triad** `?` `#` `@` — branch, fan-out, thread — is the three ways a scope
+   composes;
+3. **present vs `()`** — `()` the only nothing, every operator partial, `?` tries and
+   `=>` matches off that single bit;
+4. **one symbol, one type** — bracket is shape, `:` is keyed;
+5. and the **grafts** — functions, defer, fallibles, streams — that mostly turn out to
+   be consequences of the above.
+
+No `bool`, no `null`, no exceptions, no garbage collector, no borrow checker, and — save
+`module`/`import` — no keywords. Goal-directed evaluation given a body.
