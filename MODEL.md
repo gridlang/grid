@@ -6,8 +6,8 @@
 > than the core model).
 >
 > 1. The Substrate — ownership = scope = purity  *(done)*
-> 2. **The Triad** — `?` `#` `@` as the three ways scopes compose  ← *you are here*
-> 3. Default-truthiness — one idea unifying flow, conditionals, typing, coercion
+> 2. The Triad — `?` `#` `@` as the three ways scopes compose  *(done)*
+> 3. **Success and Nothing** — `()` is the only nothing; every operator partial  ← *you are here*
 > 4. Literals & types — one symbol, one type
 > 5. The grafts — defer, fallibles, streams
 
@@ -251,6 +251,117 @@ writes — never from flags or modes. Same combinators, composed.
 
 ---
 
-*Next — Layer 3: default-truthiness. One idea — a value is falsy when it equals its
-type's default — driving all of this at once: how arms match, why `()` filters in `#`,
-when `@` stops, and the typing / conditional / coercion questions, in a single step.*
+## Layer 3 — Success and Nothing
+
+All of control flow rests on one distinction, and only one: a thing is either
+**present** — some value, meaning "yes / it worked / here it is" — or it is **`()`**,
+the one nothing (Layer 1), shared by every absence the language can express: false,
+null, no-match, missing key, out of bounds, empty result, end of loop. There is no
+`bool`, no truthiness table. There is *present*, and there is `()`.
+
+### No bool
+
+`false` was only ever "the nothing of the boolean type" — and the language already has
+a universal nothing, so a second one is redundant. Grid removes `bool`: **failure is
+`()`, and any present value is "true."** A test does not yield `true`/`false`; it
+yields a value, or it yields nothing.
+
+That is exactly what makes the conditional clean. A *failed* test is `()` (absent),
+while a *value* like `0` is present — so "if x" never confuses "x is zero" with "x is
+missing," the snag that sank the falsy-by-default idea:
+
+```
+n ? doThing        // runs if n is present — and a data 0 IS present
+3 >= 5 ? doThing    // skipped — the test produced ()
+```
+
+### Every operator is partial
+
+Once `()` is the universal failure, every operation that *might not have an answer*
+just returns it. Operators are partial — each yields **a value, or `()`**:
+
+```
+xs[i]        // the element, or () if out of bounds
+m["key"]     // the value,  or () if the key is absent
+a / b        // the quotient, or () if b is 0
+find(s, c)   // the index,  or () if not found
+```
+
+No exceptions, no `get-or-default`, no bounds ritual: a missing map key and a failed
+`if` are the *same thing*, handled the same way. And a relation yields **its right
+operand** on success, `()` on failure — so comparison *chains* by ordinary
+left-to-right composition:
+
+```
+a < b < c      //  (a < b) < c :   1 < 2 < 3  ->  3  (holds) ;  1 < 5 < 3  ->  ()  (5<3 fails)
+x == y == z    //  equal the whole way -> z, else ()
+```
+
+A relation is just an operator with a canonical result, no more special than `1 + 2`.
+
+### `?` — try
+
+`subject ? consequent` is the one conditional. If `subject` is **present**, it yields
+`consequent` — evaluated with `subject` as the block's **topic** — otherwise `()`.
+
+```
+cond ? result               // result if cond succeeded, else ()
+m["k"] ? { v => use(v) }     // v bound to the value if the key was there, else skip
+m["k"] ? { v => use(v) } || fallback()   // ...or supply the absent case with ||
+```
+
+`?` is the `if`, the optional-unwrap of a `T | ()`, and the success-check over any
+partial operator — one operator, because they were always one idea.
+
+### `=>` — match, from the same machinery
+
+`pattern => result` reads the **topic** the enclosing combinator set, and yields
+`result` if the topic matches, else `()`. It is not new machinery — it is `==` and `?`
+plus binding:
+
+- a **literal** — `0 => r` is `(topic == 0) ? r`; since `==` is itself partial
+  (right operand on success, `()` otherwise), this yields `r` exactly when the topic is `0`;
+- a **name** — `n => r` **binds** the topic to `n` (always — never gated on its value)
+  and yields `r`;
+- `_ => r` always matches and binds nothing.
+
+Because a non-match yields `()`, and a block keeps the first present arm (Layer 2),
+**guards and matches compose in one block** — both are just value-or-`()` over the topic:
+
+```
+status ? {
+  cached ? cached            // guard arm — yield `cached` if it is present
+  200    => "ok"             // match arm — the topic (status) is 200
+  code   => `error {code}`   // bind  arm — name the topic, use it
+}                            // first present arm wins
+```
+
+And it answers "why does `x ? { 'lit' => z }` match against `x`": `?` made `x` the
+topic, and `=>` reads it.
+
+### What this dissolves
+
+- **`&&` / `||` are selectors**, not boolean algebra: `a && b` yields `b` if `a` is
+  present (else `()`); `a || b` yields `a`, or else `b`. Short-circuit by construction.
+- **An optional is `T | ()`** — present *is* "some", `()` *is* "none." No `Option`, no
+  presence flag; a present `0` and an absent `()` are distinct because `()` inhabits no
+  other type (Layer 1's no-null).
+- **A flag fuses with its payload.** "Set a bool, branch on it later" becomes a `T | ()`
+  that is present exactly when the condition holds and carries what you'd act on:
+  `running: Conn | ()` — present *is* running, and it hands you the connection. The bool
+  was always a lossy shadow of the data.
+- **No logical `!`** — invert the predicate (`a >= b`) or take the absent branch; the
+  symbol is freed for later.
+
+### The keystone
+
+Present vs `()`. Every value is success; `()` is the only failure; every operator is
+partial; `?` tries, `=>` matches, and the triad (Layer 2) reads off that single bit.
+That is the whole of Grid's conditional and control story — no bool, no null, no
+coercion, no exceptions. It is goal-directed evaluation — Icon's spine — made typed and
+value-returning.
+
+---
+
+*Next — Layer 4: literals & types. One symbol, one type (`[]` `<>` `()` and the rest),
+so every literal is knowable on sight — and the `T | ()` union sits naturally among them.*
