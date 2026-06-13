@@ -1,13 +1,14 @@
-"""Grid evaluator — the keystone core.
+"""Grid evaluator — keystone core + functions + the # / @ triad.
 
-The whole of control flow keys on one bit: a value is PRESENT, or it is UNIT
-(`()`, the one nothing). Operators are partial — any UNIT operand makes the
-result UNIT — except the selectors `||`/`&&` and `?`, which inspect presence.
-`?` sets a block's *topic*; `=>` matches the topic. Relations yield their right
-operand on success (so comparisons chain), `()` on failure.
+Control keys on one bit: PRESENT vs UNIT (`()`). Operators are partial (any UNIT
+operand -> UNIT) except the selectors `||`/`&&` and `?`. `?` sets a block's topic;
+`=>` matches it. Relations yield their right operand on success. A function is a
+detached scope (it captures the module root, never the caller's locals). `#` fans
+out collecting present results; `@` threads — present body exits the loop, () continues.
 """
 from .parser import (
-    parse, Lit, Unit, Name, Tuple, Bind, Bin, Try, Block, Match,
+    parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin,
+    Try, Iter, Block, Match, Fn, Call, Member, Index,
     LitPat, UnitPat, BindPat, WildPat, TuplePat,
 )
 
@@ -45,9 +46,34 @@ class Env:
     def define(self, name, val):
         self.vars[name] = val
 
+    def assign(self, name, val):
+        e = self
+        while e is not None:
+            if name in e.vars:
+                e.vars[name] = val
+                return
+            e = e.parent
+        raise NameError(f"cannot mutate unbound label: {name}")
+
+    def root(self):
+        e = self
+        while e.parent is not None:
+            e = e.parent
+        return e
+
+
+class Func:
+    __slots__ = ("params", "body", "root")
+    def __init__(self, params, body, root):
+        self.params = params
+        self.body = body
+        self.root = root
+
 
 def grid_eq(a, b):
     if a is UNIT or b is UNIT:
+        return a is b
+    if isinstance(a, bool) or isinstance(b, bool):     # defensive; Grid has no bool
         return a is b
     return type(a) == type(b) and a == b
 
@@ -67,9 +93,26 @@ def eval_node(node, env, topic):
         return env.get(node.id)
     if t is Tuple:
         return tuple(eval_node(i, env, topic) for i in node.items)
+    if t is ListLit:
+        return [eval_node(i, env, topic) for i in node.items]
+    if t is StructLit:
+        return {n: eval_node(v, env, topic) for n, v in node.fields}
     if t is Bind:
-        env.define(node.name, eval_node(node.value, env, topic))
-        return UNIT                                   # a binding yields () (Layer 5)
+        env.define(node.name, eval_node(node.value, env, topic) if node.value is not None else UNIT)
+        return UNIT
+    if t is InPlace:
+        cur = env.get(node.name)
+        rhs = eval_node(node.value, env, topic)
+        env.assign(node.name, _arith(node.op, cur, rhs))
+        return UNIT
+    if t is Fn:
+        return Func(node.params, node.body, env.root())
+    if t is Call:
+        return eval_call(node, env, topic)
+    if t is Member:
+        return eval_member(eval_node(node.obj, env, topic), node.key)
+    if t is Index:
+        return eval_index(eval_node(node.obj, env, topic), eval_node(node.idx, env, topic))
     if t is Block:
         return eval_scope_block(node, Env(env), topic)
     if t is Bin:
@@ -80,7 +123,9 @@ def eval_node(node, env, topic):
             return UNIT
         if type(node.cons) is Block:
             return eval_match_block(node.cons, Env(env), subj)
-        return eval_node(node.cons, env, subj)        # guard: `cond ? result`
+        return eval_node(node.cons, env, subj)
+    if t is Iter:
+        return eval_iter(node, env, topic)
     if t is Match:
         sub = Env(env)
         if match_pat(node.pat, topic, sub):
@@ -88,6 +133,57 @@ def eval_node(node, env, topic):
         return UNIT
 
     raise RuntimeError(f"cannot eval {node}")
+
+
+def eval_call(node, env, topic):
+    f = eval_node(node.fn, env, topic)
+    args = [eval_node(a, env, topic) for a in node.args]
+    if isinstance(f, Func):
+        call_env = Env(f.root)
+        for name, val in zip(f.params, args):
+            call_env.define(name, val)
+        return eval_scope_block(f.body, call_env, UNIT)
+    if callable(f):                                    # builtin
+        return f(*args)
+    raise RuntimeError(f"not callable: {f!r}")
+
+
+def eval_member(obj, key):
+    if isinstance(key, int):                           # tuple/list index by .N
+        if isinstance(obj, (tuple, list)) and -len(obj) <= key < len(obj):
+            return obj[key]
+        return UNIT
+    if isinstance(obj, dict):                          # struct field
+        return obj.get(key, UNIT)
+    return UNIT
+
+
+def eval_index(obj, idx):
+    if isinstance(obj, (list, tuple, str)):
+        if isinstance(idx, int) and -len(obj) <= idx < len(obj):
+            return obj[idx]
+        return UNIT
+    if isinstance(obj, dict):
+        return obj.get(idx, UNIT)
+    return UNIT
+
+
+def _arith(op, l, r):
+    if l is UNIT or r is UNIT:
+        return UNIT
+    if op == "+":
+        return l + r
+    if op == "-":
+        return l - r
+    if op == "*":
+        return l * r
+    if op == "%":
+        return UNIT if r == 0 else l % r
+    if op == "/":
+        if r == 0:
+            return UNIT
+        return l // r if isinstance(l, int) and isinstance(r, int) else l / r
+    raise RuntimeError(f"unknown arithmetic op {op}")
 
 
 def eval_bin(node, env, topic):
@@ -101,23 +197,11 @@ def eval_bin(node, env, topic):
 
     l = eval_node(node.l, env, topic)
     r = eval_node(node.r, env, topic)
-    if l is UNIT or r is UNIT:                         # partial: nothing in, nothing out
+    if l is UNIT or r is UNIT:
         return UNIT
 
-    if op == "+":
-        return l + r
-    if op == "-":
-        return l - r
-    if op == "*":
-        return l * r
-    if op == "%":
-        return UNIT if r == 0 else l % r
-    if op == "/":
-        if r == 0:
-            return UNIT                                # divide by zero -> () (no exception)
-        return l // r if isinstance(l, int) and isinstance(r, int) else l / r
-
-    # relations: yield the RIGHT operand on success, () on failure
+    if op in ("+", "-", "*", "/", "%"):
+        return _arith(op, l, r)
     if op == "==":
         return r if grid_eq(l, r) else UNIT
     if op == "!=":
@@ -130,12 +214,10 @@ def eval_bin(node, env, topic):
         return r if l > r else UNIT
     if op == ">=":
         return r if l >= r else UNIT
-
     raise RuntimeError(f"unknown operator {op}")
 
 
 def eval_scope_block(block, env, topic):
-    """Plain block: evaluate in order, value is the last expression (() if empty)."""
     val = UNIT
     for item in block.items:
         val = eval_node(item, env, topic)
@@ -143,11 +225,57 @@ def eval_scope_block(block, env, topic):
 
 
 def eval_match_block(block, env, topic):
-    """`?`-opened block: first arm that yields a present value wins, else ()."""
     for item in block.items:
-        val = eval_node(item, env, topic)
+        val = eval_node(item, Env(env), topic)
         if present(val):
             return val
+    return UNIT
+
+
+def _source_items(v):
+    """A source yields (index/key, element/value) tuples — the per-step topic."""
+    if isinstance(v, dict):
+        return list(v.items())
+    if isinstance(v, (list, tuple, str)):
+        return list(enumerate(v))
+    return None
+
+
+def eval_iter(node, env, topic):
+    if node.op == "#":
+        src = eval_node(node.subj, env, topic)
+        items = _source_items(src)
+        if items is None:
+            return UNIT
+        out = []
+        for step in items:
+            v = eval_scope_block(node.block, Env(env), step)
+            if present(v):
+                out.append(v)
+        return out
+
+    # node.op == "@"
+    if node.subj is None:                              # bare @ {}: loop until present
+        while True:
+            v = eval_scope_block(node.block, Env(env), UNIT)
+            if present(v):
+                return v
+
+    first = eval_node(node.subj, env, topic)
+    items = _source_items(first)
+    if items is not None:                              # thread over a collection
+        for step in items:
+            v = eval_scope_block(node.block, Env(env), step)
+            if present(v):
+                return v
+        return UNIT
+
+    cond = first                                       # thread while a condition holds
+    while present(cond):
+        v = eval_scope_block(node.block, Env(env), cond)
+        if present(v):
+            return v
+        cond = eval_node(node.subj, env, topic)
     return UNIT
 
 
@@ -163,7 +291,7 @@ def match_pat(pat, topic, env):
         env.define(pat.name, topic)
         return True
     if t is TuplePat:
-        if not isinstance(topic, tuple) or len(topic) != len(pat.items):
+        if not isinstance(topic, (tuple, list)) or len(topic) != len(pat.items):
             return False
         return all(match_pat(p, v, env) for p, v in zip(pat.items, topic))
     raise RuntimeError(f"unknown pattern {pat}")
@@ -176,9 +304,14 @@ def grid_str(v):
         return v
     if isinstance(v, tuple):
         return "(" + ", ".join(grid_str(x) for x in v) + ")"
+    if isinstance(v, list):
+        return "[" + ", ".join(grid_str(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
+    if isinstance(v, Func):
+        return "<fn>"
     return str(v)
 
 
 def run(src):
-    ast = parse(src)
-    return eval_scope_block(ast, Env(), UNIT)
+    return eval_scope_block(parse(src), Env(), UNIT)
