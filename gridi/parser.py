@@ -44,6 +44,12 @@ class Fn:        params: list; body: object; fallible: bool = False; stateful: b
 @dataclass
 class Emit:      value: object                          # prefix >> (yield from a stream)
 @dataclass
+class Defer:     expr: object                           # prefix ~ (run at scope exit)
+@dataclass
+class ModuleDecl: name: str
+@dataclass
+class ImportDecl: name: str
+@dataclass
 class Call:      fn: object; args: list
 @dataclass
 class Bang:      expr: object                           # postfix ! (raise / unwrap-or-propagate)
@@ -53,6 +59,8 @@ class Interp:    parts: list                            # list of ("lit", str) |
 class Destructure: names: list; value: object
 @dataclass
 class Member:    obj: object; key: object               # str field or int index
+@dataclass
+class MethodCall: obj: object; name: str; args: list    # obj.name(args): member-call, else UFCS
 @dataclass
 class Index:     obj: object; idx: object
 
@@ -133,6 +141,16 @@ class Parser:
         return items
 
     def parse_item(self):
+        if self.at("NAME", "module"):
+            self.eat("NAME")
+            return ModuleDecl(self.eat("NAME").val)
+        if self.at("NAME", "import"):
+            self.eat("NAME")
+            name = self.eat("NAME").val
+            while self.at("OP", "/") or self.at("PUNCT", "."):
+                self.i += 1
+                name = self.eat("NAME").val
+            return ImportDecl(name)
         d = self.try_destructure()
         if d is not None:
             return d
@@ -197,13 +215,26 @@ class Parser:
         return self.parse_expr()
 
     def parse_type(self):
-        # consume one type atom (names, [..], (..)); types are not checked at runtime
-        if self.at("NAME"):
+        # types are not checked at runtime — skip a type expression by tokens,
+        # stopping at the punctuation that ends it (=, comma, closing, !, {, …)
+        depth = 0
+        while True:
+            t = self.cur()
+            if t.kind in ("EOF", "NL"):
+                return
+            if t.kind == "PUNCT" and t.val in ("(", "["):
+                depth += 1
+                self.i += 1
+                continue
+            if t.kind == "PUNCT" and t.val in (")", "]"):
+                if depth == 0:
+                    return
+                depth -= 1
+                self.i += 1
+                continue
+            if depth == 0 and t.kind == "PUNCT" and t.val in ("=", ",", ";", "!", "{"):
+                return
             self.i += 1
-        elif self.at("PUNCT", "("):
-            self.parse_paren()
-        elif self.at("PUNCT", "["):
-            self.parse_list()
 
     # expressions --------------------------------------------------------------
 
@@ -211,6 +242,9 @@ class Parser:
         if self.at("SHIFT", ">>"):                  # prefix >> : emit a stream value
             self.eat("SHIFT", ">>"); self.nl()
             return Emit(self.parse_expr())
+        if self.at("PUNCT", "~"):                   # prefix ~ : defer to scope exit
+            self.eat("PUNCT", "~"); self.nl()
+            return Defer(self.parse_expr())
         return self.parse_or()
 
     def parse_or(self):
@@ -264,9 +298,9 @@ class Parser:
         return l
 
     def parse_postfix(self):
+        if self.at("PUNCT", "(") and self._paren_is_params():
+            return self.parse_fn_rest(self.parse_params())
         node = self.parse_atom()
-        if self.at("ARROW") or self.at("SHIFT", ">>"):   # the atom was a function's params
-            return self.parse_fn_rest(node)
         while True:
             if self.at("PUNCT", "("):
                 node = Call(node, self.parse_args())
@@ -276,8 +310,8 @@ class Parser:
                     node = Member(node, int(self.eat("INT").val))
                 else:
                     name = self.eat("NAME").val
-                    if self.at("PUNCT", "("):       # UFCS: x.f(a) -> f(x, a)
-                        node = Call(Name(name), [node] + self.parse_args())
+                    if self.at("PUNCT", "("):       # obj.name(args): member-call or UFCS
+                        node = MethodCall(node, name, self.parse_args())
                     else:
                         node = Member(node, name)
             elif self.at("PUNCT", "["):
@@ -302,7 +336,51 @@ class Parser:
         self.eat("PUNCT", ")")
         return args
 
-    def parse_fn_rest(self, params_node):
+    def _paren_is_params(self):
+        # a `(...)` that is immediately followed by `->` or `>>` is a parameter list
+        depth = 0
+        j = self.i
+        n = len(self.toks)
+        while j < n:
+            t = self.toks[j]
+            if t.kind == "EOF":
+                return False
+            if t.kind == "PUNCT" and t.val in ("(", "[", "{"):
+                depth += 1
+            elif t.kind == "PUNCT" and t.val in (")", "]", "}"):
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        k = j + 1
+        while k < n and self.toks[k].kind == "NL":
+            k += 1
+        t = self.toks[k]
+        return t.kind == "ARROW" or (t.kind == "SHIFT" and t.val == ">>")
+
+    def parse_params(self):
+        self.eat("PUNCT", "("); self.nl()
+        names = []
+        if self.at("PUNCT", ")"):
+            self.eat("PUNCT", ")")
+            return names
+        while True:
+            names.append(self.eat("NAME").val)
+            if self.at("PUNCT", ":"):
+                self.eat("PUNCT", ":")
+                if self.at("PUNCT", "&"):
+                    self.eat("PUNCT", "&")
+                self.parse_type()                   # parameter type, ignored at runtime
+            if self.at("PUNCT", ","):
+                self.eat("PUNCT", ","); self.nl()
+                if self.at("PUNCT", ")"):
+                    break
+                continue
+            break
+        self.eat("PUNCT", ")")
+        return names
+
+    def parse_fn_rest(self, params):
         fallible = stateful = False
         if self.at("SHIFT", ">>"):                  # stateful stream: `(params) >> T { ... }`
             self.eat("SHIFT", ">>"); self.nl()
@@ -316,18 +394,7 @@ class Parser:
                 self.parse_type()                   # error type E, ignored at runtime
                 fallible = True
         body = self.parse_block()
-        return Fn(self.extract_params(params_node), body, fallible, stateful)
-
-    def extract_params(self, node):
-        if isinstance(node, Unit):
-            return []
-        if isinstance(node, StructLit):
-            return [n for n, _ in node.fields]
-        if isinstance(node, Tuple):
-            return [i.id for i in node.items]
-        if isinstance(node, Name):
-            return [node.id]
-        raise SyntaxError(f"not a parameter list: {node}")
+        return Fn(params, body, fallible, stateful)
 
     def parse_atom(self):
         t = self.cur()
@@ -341,6 +408,9 @@ class Parser:
             self.i += 1; return self.parse_interp(t.val)
         if t.kind == "NAME":
             self.i += 1; return Name(t.val)
+        if self.at("PUNCT", "@"):                   # bare @ { } : an infinite loop
+            self.eat("PUNCT", "@"); self.nl()
+            return Iter("@", None, self.parse_block())
         if self.at("PUNCT", "{"):
             return self.parse_block()
         if self.at("PUNCT", "("):

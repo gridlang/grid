@@ -8,8 +8,9 @@ out collecting present results; `@` threads — present body exits the loop, () 
 """
 from .parser import (
     parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin,
-    Try, Iter, Block, Match, Fn, Call, Member, Index, Bang, Interp, Destructure,
-    Emit, LitPat, UnitPat, BindPat, WildPat, TuplePat,
+    Try, Iter, Block, Match, Fn, Call, Member, MethodCall, Index, Bang, Interp,
+    Destructure, Emit, Defer, ModuleDecl, ImportDecl,
+    LitPat, UnitPat, BindPat, WildPat, TuplePat,
 )
 
 
@@ -72,6 +73,16 @@ class Func:
         self.stateful = stateful
 
 
+class TypeTag:
+    """A base type name used as a value (e.g. in `Response = (status: int, …)`).
+    Types are not checked at runtime, so this is an inert placeholder."""
+    __slots__ = ("name",)
+    def __init__(self, name):
+        self.name = name
+    def __repr__(self):
+        return self.name
+
+
 class Stream:
     """An eagerly-collected stream instance: yields each value, then () forever."""
     __slots__ = ("items", "cursor")
@@ -88,6 +99,43 @@ class Stream:
 
 
 _emit_stack = []        # stack of collectors; >> appends to the top (one per running stream)
+_defer_stack = []       # stack of frames; ~ appends (expr, env); run LIFO at function exit
+
+
+# ─── a small stdlib (namespaces are just dicts of builtins) ──────────────────
+
+def _str_lines(s):
+    return s.split("\n")
+
+def _str_words(s):
+    return s.split()
+
+def _str_join(xs, sep=""):
+    return sep.join(grid_str(x) for x in xs)
+
+def _net_unavailable(*_a):
+    raise RuntimeError("net.* needs real I/O; not available in the validator")
+
+
+def _make_stdlib():
+    return {
+        "str": {
+            "lines": _str_lines,
+            "words": _str_words,
+            "trim": lambda s: s.strip(),
+            "join": _str_join,
+            "upper": lambda s: s.upper(),
+            "lower": lambda s: s.lower(),
+        },
+        "sys": {
+            "print": lambda *a: (print("".join(grid_str(x) for x in a), end=""), UNIT)[1],
+        },
+        "net": {k: _net_unavailable for k in
+                ("listen", "accept", "readline", "read", "write", "close")},
+    }
+
+
+STDLIB = _make_stdlib()
 
 
 class Fallible:
@@ -152,8 +200,24 @@ def eval_node(node, env, topic):
     if t is Emit:
         _emit_stack[-1].append(eval_node(node.value, env, topic))
         return UNIT
+    if t is Defer:
+        if _defer_stack:
+            _defer_stack[-1].append((node.expr, env))
+        return UNIT
+    if t is ModuleDecl:
+        return UNIT
+    if t is ImportDecl:
+        env.define(node.name, STDLIB.get(node.name, {}))
+        return UNIT
     if t is Call:
         return eval_call(node, env, topic)
+    if t is MethodCall:
+        obj = eval_node(node.obj, env, topic)
+        args = [eval_node(a, env, topic) for a in node.args]
+        m = eval_member(obj, node.name)               # member-call if obj HAS the member
+        if m is not UNIT and (isinstance(m, (Func, Stream)) or callable(m)):
+            return apply_func(m, args)
+        return apply_func(env.get(node.name), [obj] + args)   # else UFCS: name(obj, args)
     if t is Bang:
         return eval_bang(eval_node(node.expr, env, topic))
     if t is Interp:
@@ -196,25 +260,34 @@ def eval_node(node, env, topic):
 def eval_call(node, env, topic):
     f = eval_node(node.fn, env, topic)
     args = [eval_node(a, env, topic) for a in node.args]
+    return apply_func(f, args)
+
+
+def apply_func(f, args):
     if isinstance(f, Stream):                          # s() : next value, or ()
         return f.advance()
     if isinstance(f, Func):
         call_env = Env(f.root)
         for name, val in zip(f.params, args):
             call_env.define(name, val)
-        if f.stateful:
-            _emit_stack.append([])
-            try:
-                eval_scope_block(f.body, call_env, UNIT)
-            finally:
-                collected = _emit_stack.pop()
-            return Stream(collected)
-        if f.fallible:
-            try:
-                return Fallible(eval_scope_block(f.body, call_env, UNIT), UNIT)
-            except Propagate as p:
-                return Fallible(UNIT, p.err)
-        return eval_scope_block(f.body, call_env, UNIT)
+        _defer_stack.append([])                         # ~ deferrals run on every exit
+        try:
+            if f.stateful:
+                _emit_stack.append([])
+                try:
+                    eval_scope_block(f.body, call_env, UNIT)
+                finally:
+                    collected = _emit_stack.pop()
+                return Stream(collected)
+            if f.fallible:
+                try:
+                    return Fallible(eval_scope_block(f.body, call_env, UNIT), UNIT)
+                except Propagate as p:
+                    return Fallible(UNIT, p.err)
+            return eval_scope_block(f.body, call_env, UNIT)
+        finally:
+            for expr, denv in reversed(_defer_stack.pop()):
+                eval_node(expr, denv, UNIT)
     if callable(f):                                    # builtin
         return f(*args)
     raise RuntimeError(f"not callable: {f!r}")
@@ -396,6 +469,8 @@ def grid_str(v):
         return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
     if isinstance(v, Func):
         return "<fn>"
+    if isinstance(v, TypeTag):
+        return v.name
     if isinstance(v, Stream):
         return "<stream>"
     if isinstance(v, Fallible):
@@ -404,7 +479,10 @@ def grid_str(v):
 
 
 def run(src):
+    g = Env()
+    for name in ("int", "num", "char", "str"):          # base type names as inert tags
+        g.define(name, TypeTag(name))
     try:
-        return eval_scope_block(parse(src), Env(), UNIT)
+        return eval_scope_block(parse(src), g, UNIT)
     except Propagate as p:
         raise RuntimeError(f"unhandled failure: {grid_str(p.err)}")
