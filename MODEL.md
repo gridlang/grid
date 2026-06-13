@@ -7,8 +7,8 @@
 >
 > 1. The Substrate — ownership = scope = purity  *(done)*
 > 2. The Triad — `?` `#` `@` as the three ways scopes compose  *(done)*
-> 3. **Success and Nothing** — `()` is the only nothing; every operator partial  ← *you are here*
-> 4. Literals & types — one symbol, one type
+> 3. Success and Nothing — `()` is the only nothing; every operator partial  *(done)*
+> 4. **Literals & Types** — one symbol, one type  ← *you are here*
 > 5. The grafts — defer, fallibles, streams
 
 ---
@@ -363,5 +363,110 @@ value-returning.
 
 ---
 
-*Next — Layer 4: literals & types. One symbol, one type (`[]` `<>` `()` and the rest),
-so every literal is knowable on sight — and the `T | ()` union sits naturally among them.*
+## Layer 4 — Literals and Types
+
+One symbol, one type — in its true form: **the bracket tells you the container's shape,
+and `:` tells you it is keyed.** You know what a literal is from its delimiters alone —
+no context, no inference (A1). And `{ }` is freed entirely: it is a *block*, only ever a
+block (Layers 1–2), so the brace ambiguity that haunts curly-brace languages cannot
+arise here.
+
+### Two containers, two axes
+
+There are exactly two bracket families, split by shape:
+
+- **`( … )` is fixed** — a set number of (possibly mixed) slots.
+- **`[ … ]` is variable** — any number of (uniform) elements.
+
+and each becomes *keyed* by adding `:` — the same `:` that annotates a type everywhere
+else:
+
+|  | positional | keyed (`key: value`) |
+|---|---|---|
+| **`( )` — fixed** | tuple `(1, "a")` | struct `(x: 1, y: 2)` |
+| **`[ ]` — variable** | list `[1, 2, 3]` | map `["a": 1, "b": 2]` |
+
+A struct is a *named tuple*; a map is a *keyed list* — one structuring move applied to
+each container. The only difference between a struct key and a map key is what sits
+left of the `:`: a struct's is an **identifier** — a field name, fixed in the type
+(`(x: int)`); a map's is a **value** — a key, computed at runtime (`[k: v]`).
+
+### Base types
+
+| type | literal | default | note |
+|---|---|---|---|
+| `()` | `()` | `()` | unit — the one nothing (Layer 3) |
+| `int` | `-123` | `0` | |
+| `num` | `-1.23e4` | `0.0` | real |
+| `char` | `'z'` | `'\0'` | a representable default, not the empty `''` |
+| `str` | `"hello"` | `""` | |
+
+No `bool` (Layer 3). (Sized numerics — `u8`, `i32`, … for layout and FFI — are a later
+refinement; bare `int`/`num` for now.)
+
+### Lists and maps — both `[ ]`, both indexed, both partial
+
+```
+xs = [1, 2, 3]            // [int]
+m  = ["a": 1, "b": 2]     // [str: int]
+xs[1]                      // 2,  or () if out of range
+m["a"]                     // 1,  or () if absent      <- same [] access, same partiality (Layer 3)
+[]                         // empty list
+[:]                        // empty map (the : marks it keyed even when empty)
+```
+
+Type forms mirror the literals: `[T]` a list, `[K: V]` a map. Map keys are base-type
+values (they must compare for lookup).
+
+### Tuples and structs — both `( )`
+
+```
+p = (1, "a")              // (int, str) tuple;  p.0 -> 1
+q = (x: 1, y: 2)          // (x: int, y: int) struct;  q.x -> 1
+(x,)                       // a 1-tuple — `(x)` alone is just grouping
+Point(x: 1)                // named-struct construction; absent fields take defaults
+```
+
+Type forms: `(A, B)` a tuple, `(name: T)` a struct. In a *type* position the right of a
+`:` is a type; in a *value* position it is a value — which is how `(x: foo)` stays
+knowable even though any label can name a type (labels-as-types, below).
+
+### Unions and intersection
+
+`|` is free now (the old match-`|` became `=>` arms), so it carries **union**:
+
+```
+T | ()                     // the optional — present is "some", () is "none" (Layer 3)
+Shape | Color              // either type
+```
+
+`&` carries **structural intersection** — a value satisfying both:
+
+```
+Person   = (name: str, age: int)
+Employee = Person & (id: int)     // has name, age, AND id
+```
+
+`&` is positional: a **prefix** `&T` is mutability (Layer 1, the attached handle); an
+**infix** `A & B` on types is intersection (and on `int`s it is bitwise-and — separated
+by value-vs-type position). A union's default is the default of its first member — so
+`T | ()` defaults to `()`, which is exactly "absent."
+
+### Labels as types, structural fit
+
+Any label may stand as a type; the type is the label's:
+
+```
+coords = [1.0, 2.0, 3.0]   // [num]
+origin: coords              // type [num], default []
+```
+
+And typing is structural: a value is accepted wherever it carries *at least* the
+required shape — `(name: "Bo", age: 9, id: 1)` is a valid `Person`, because it has
+`Person`'s fields.
+
+---
+
+*Next — Layer 5: the grafts. Functions in full (named, detached scopes from Layer 1),
+then `~` defer, the `-> T ! E` fallible shorthand over `T | ()`, and stateful `>>`
+streams — the good late ideas, added on top of the keystone rather than into it.*
