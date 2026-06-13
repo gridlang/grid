@@ -174,8 +174,8 @@ arm matches is Layer 3; here we fix what each operator does and what it yields.)
 
 ### `?` — branch
 
-`?` matches the input and runs **one** block — the first arm that matches — yielding
-that arm's result; if nothing matches, `()`.
+`?` runs a block against the input; a matching `=>` arm **commits** it — the first arm
+that matches wins, yielding its result; if nothing matches, `()`.
 
 ```
 x ? {
@@ -184,8 +184,8 @@ x ? {
 }
 ```
 
-`if`/`else`, `switch`, and guard-matching in one operator: one input, one chosen
-block, one result.
+`switch` and guard-matching here; `if`/`else` is `?:` (Layer 3) — one input, one
+chosen result.
 
 ### `#` — fan-out
 
@@ -254,7 +254,7 @@ or writes — never from flags or modes. Same combinators, composed.
 
 | operator | runs | yields |
 |---|---|---|
-| `?` | one block (the matching arm) | that arm's result, or `()` |
+| `?` | the block (a matching `=>` arm commits) | the committed arm's result, the block's last value, or `()` if the subject is absent |
 | `#` | one block per element, in parallel | the list of non-`()` results |
 | `@` | one block per step, threaded | its last block's value; accumulated state read from the moved-back `&` |
 
@@ -308,50 +308,81 @@ x == y == z    //  equal the whole way -> z, else ()
 
 A relation is just an operator with a canonical result, no more special than `1 + 2`.
 
-### `?` — try
+### `?` — try, and `?:` — branch
 
 `subject ? consequent` is the one conditional. If `subject` is **present**, it yields
-`consequent` — evaluated with `subject` as the block's **topic** — otherwise `()`.
+`consequent` — evaluated with `subject`'s value as the block's **topic** — otherwise `()`.
 
 ```
 cond ? result               // result if cond succeeded, else ()
-m["k"] ? { v => use(v) }     // v bound to the value if the key was there, else skip
-m["k"] ? { v => use(v) } || fallback()   // ...or supply the absent case with ||
+m["k"] ? v => use(v)         // if-let: v binds the value if the key was there, else ()
 ```
 
-`?` is the `if`, the optional-unwrap of a `T | ()`, and the success-check over any
-partial operator — one operator, because they were always one idea.
+For an explicit **else**, `?:` is the two-outcome **branch**: `subject ? then : else` runs
+exactly one side, chosen by `subject`'s presence — the decision is on the condition, not on
+`then`'s value (so a `()`-valued `then` does *not* trigger the `else`):
 
-### `=>` — match, from the same machinery
+```
+m["k"] ? v => use(v) : fallback()        // present -> use it; absent -> fallback
+n % 2 == 0 ? n / 2 : `{n} is odd`!       // value if / else
+n > 99 ? "big" : n > 9 ? "med" : "small" // right-associative -> an elif ladder
+```
 
-`pattern => result` reads the **topic** the enclosing combinator set, and yields
-`result` if the topic matches, else `()`. It is not new machinery — it is `==` and `?`
-plus binding:
+`?:` is the **loosest** operator (right-associative); the condition and both branches take
+full expressions. `||` is *not* an else — it stays a pure value-selector. `?` is the `if`,
+the optional-unwrap of a `T | ()`, and the success-check over any partial operator; `?:`
+gives it a second arm.
 
-- a **literal** — `0 => r` is `(topic == 0) ? r`; since `==` is itself partial
-  (right operand on success, `()` otherwise), this yields `r` exactly when the topic is `0`;
-- a **name** — `n => r` **binds** the topic to `n` (always — never gated on its value)
-  and yields `r`;
-- `_ => r` always matches and binds nothing.
+### `=>` — match and commit
 
-Because a non-match yields `()`, and a block keeps the first present arm (Layer 2),
-**guards and matches compose in one block** — both are just value-or-`()` over the topic:
+`pattern => result` is an ordinary operator that reads the block's **topic**, matches the
+pattern, binds, and **on a match commits the enclosing block** — the block returns
+`result` immediately, *even if `result` is `()`*. On no match it yields `()` and the block
+runs on. It is `==` + bind + an early return:
+
+- a **literal** — `0 => r` commits with `r` exactly when the topic is `0`;
+- a **name** — `n => r` always matches, **binds** the topic to `n`, and commits with `r`;
+- `_ => r` always matches, binds nothing, commits with `r`;
+- **structural** — `(a, b) => r` / `[a, b] => r` match shape and bind each position.
+
+A non-match is transparent (it yields `()` and threads the topic through), so several `=>`
+arms in a block **dispatch** — the first that matches commits; later arms never run:
 
 ```
 status ? {
-  cached ? cached            // guard arm — yield `cached` if it is present
-  200    => "ok"             // match arm — the topic (status) is 200
-  code   => `error {code}`   // bind  arm — name the topic, use it
-}                            // first present arm wins
+  200  => "ok"
+  404  => "missing"
+  code => `error {code}`     // binds the topic, commits
+}
 ```
 
-And it answers "why does `x ? { 'lit' => z }` match against `x`": `?` made `x` the
-topic, and `=>` reads it.
+Because commit is on the **match**, not on the result's presence, a matched arm may do
+effects and yield `()` and still win — no sentinel needed:
+
+```
+status ? {
+  200 => { log("ok"); () }   // commits on match; the () result is fine
+  _   => { log("else"); () }
+}
+```
+
+`=>` is a normal operator, usable anywhere an expression is — not only inside a block — so
+`f() ? x => g(x) : h()` binds `f()`'s value in the then-branch. And it answers "why does
+`x ? { 'lit' => z }` match against `x`": `?` made `x`'s value the topic, and `=>` reads it.
+
+**Blocks.** A `{ }` block is one scope, run as a sequence: it returns the result of the
+first `=>` arm that commits, or else its last statement's value. The **topic** is the
+block's implicit input — set by the combinator on the left (`subject ? …`, `xs @ …`,
+`xs # …`) or inherited — and threads as the *last present value*: a statement that yields a
+value updates it, a `()` (an effect, a non-matching arm) passes it through. So a prelude can
+compute the very subject the arms match (`{ normalize(x)  "GET" => … }`).
 
 ### What this dissolves
 
 - **`&&` / `||` are selectors**, not boolean algebra: `a && b` yields `b` if `a` is
   present (else `()`); `a || b` yields `a`, or else `b`. Short-circuit by construction.
+  `||` is a value-default, *not* an `if`/`else` — that is `?:`. (Indeed `a || b` is the
+  degenerate branch `a ? a : b`, where the test is the payload.)
 - **An optional is `T | ()`** — present *is* "some", `()` *is* "none." No `Option`, no
   presence flag; a present `0` and an absent `()` are distinct because `()` inhabits no
   other type (Layer 1's no-null).
@@ -675,7 +706,9 @@ The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. E
   rule; the body's value is control, by design.
 - **Inline `;` (syntax).** A newline ends an expression; `;` is the same separator on a
   single line: `{ sys.print(e); 1 }`.
-- **Precedence (provisional).** A `{block}` binds to the `?` / `#` / `@` on its immediate
-  left as a tight unit; among the rest, tightest → loosest: `.` `[]` `()`, postfix `!`,
-  prefix `&` / `~`, `* / %`, `+ -`, bitwise, `..`, comparison, `&&`, `||`, bare infix `?`.
-  So `err ? {…} || 0` parses as `(err ? {…}) || 0`. The interpreter will fix this exactly.
+- **Precedence.** A `{block}` binds to the `#` / `@` on its immediate left as a tight unit;
+  among operators, tightest → loosest: `.` `[]` `()`, postfix `!`, prefix `&` / `~`,
+  `* / %`, `+ -`, bitwise, `..`, comparison, `&&`, `||`, `=>`, then `?:` (loosest,
+  right-associative). So `err ? {…} : 0` is the if-else, and `||` is a pure value-selector,
+  never an else. `=>` sits just under `?:`, so `f() ? x => g(x) : h()` reads as
+  then = `x => g(x)`, else = `h()`.
