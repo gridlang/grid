@@ -5,8 +5,8 @@
 > supersedes the older `design.md` (which crystallized a later, drifted syntax rather
 > than the core model).
 >
-> 1. **The Substrate** — ownership = scope = purity  ← *you are here*
-> 2. The Triad — `?` `#` `@` as the three ways scopes compose
+> 1. The Substrate — ownership = scope = purity  *(done)*
+> 2. **The Triad** — `?` `#` `@` as the three ways scopes compose  ← *you are here*
 > 3. Default-truthiness — one idea unifying flow, conditionals, typing, coercion
 > 4. Literals & types — one symbol, one type
 > 5. The grafts — defer, fallibles, streams
@@ -159,6 +159,98 @@ move-back, these are free — not features, but consequences:
 
 ---
 
-*Next — Layer 2: the triad `?` `#` `@`, as the three ways scopes compose — branch,
-fan-out, thread. Reduce and parallel-map live here, and they fall out of this
-substrate rather than being bolted onto it.*
+## Layer 2 — The Triad
+
+Three combinators, three ways a block composes over an input: **`?` branches, `#` fans
+out, `@` threads.** They share one shape —
+
+```
+input OP { pattern => result }
+```
+
+— where `{ … }` is a holed block (Layer 1) and the arms `pattern => result` match the
+input. They differ only in how many blocks run and how those blocks relate. (*How* an
+arm matches is Layer 3; here we fix what each operator does and what it yields.)
+
+### `?` — branch
+
+`?` matches the input and runs **one** block — the first arm that matches — yielding
+that arm's result; if nothing matches, `()`.
+
+```
+x ? {
+  0 => "zero"
+  _ => "some"
+}
+```
+
+`if`/`else`, `switch`, and guard-matching in one operator: one input, one chosen
+block, one result.
+
+### `#` — fan-out
+
+`#` runs **one independent block per element** of the input and collects the results
+into a list. A block that yields `()` contributes nothing — so the same operator
+filters (an arm yields `()` to drop its element; *how* it decides is Layer 3).
+
+```
+doubled = nums # { n => n * 2 }     // map -> [2, 4, 6, …]
+```
+
+Each block is its own scope. By Layer 1 it may *read* (share) the surrounding scope but
+cannot *write* it — a write is a move, and one handle cannot move into every parallel
+block — so the blocks are independent and `#` runs them in parallel, safely, with no
+annotation.
+
+### `@` — thread
+
+`@` runs **one block, in sequence, threaded over the input**, carrying state from step
+to step. The state is nothing special: it is the captured `&` the block writes (Layer
+1), moved in and back across the run.
+
+```
+sum: &int = 0
+nums @ { n => sum += n }     // reduce — sum threads through; afterward it is the total
+```
+
+What you thread over decides the shape:
+
+- a **collection** → the block runs once per element — **reduce**;
+- a **condition** → the input is re-checked each step and the block runs while it holds
+  — **loop**.
+
+```
+i: &int = 0
+i < 4 @ { i += 1 }          // loop — runs while i < 4; afterward i is 4
+```
+
+Reduce and loop are not two constructs; they are `@` handed two kinds of input. Because
+`@` is sequential, its block *may* write a captured `&` — which is precisely why the
+accumulator needs no syntax of its own. (The bare infinite form `@ { … }` and
+early-exit-with-a-value are Layer 3 — they need the truthiness machinery.)
+
+### Why the three are one family
+
+`#` and `@` are the *same* iteration over the *same* kind of block. The only difference
+is **independent vs threaded** — and that is not a new axis; it is Layer 1's
+**read-share** (safe in parallel) versus **write-move** (must run in sequence). The
+substrate already drew the line; the triad just names both sides of it. `?` is the
+degenerate case: zero-or-one blocks — choose one rather than repeat one.
+
+This is the property worth keeping: behavior comes from *what you hand the operator* — a
+collection or a condition, an arm that yields a value or `()`, a block that reads or
+writes — never from flags or modes. Same combinators, composed.
+
+### What each yields
+
+| operator | runs | yields |
+|---|---|---|
+| `?` | one block (the matching arm) | that arm's result, or `()` |
+| `#` | one block per element, in parallel | the list of non-`()` results |
+| `@` | one block per step, threaded | its last block's value; accumulated state read from the moved-back `&` |
+
+---
+
+*Next — Layer 3: default-truthiness. One idea — a value is falsy when it equals its
+type's default — driving all of this at once: how arms match, why `()` filters in `#`,
+when `@` stops, and the typing / conditional / coercion questions, in a single step.*
