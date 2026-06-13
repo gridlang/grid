@@ -74,6 +74,12 @@ def test_bindings_and_sequence():
     assert run("a = 2\nb = 3\na * b") == 6
 
 
+def test_comments_are_ignored():
+    # `//` must lex as a comment, not two `/` operators
+    assert run("x = 1  // a trailing comment\nx + 1  // another") == 2
+    assert run("// leading comment\n40 + 2") == 42
+
+
 def test_guard_and_match_compose_in_a_block():
     # an infix-? guard arm and a => match arm side by side, first present wins
     src = 'cached = ()\nstatus = 200\nstatus ? {\n  cached ? cached\n  200 => "ok"\n  code => code\n}'

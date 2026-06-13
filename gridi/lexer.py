@@ -12,6 +12,7 @@ TOKEN_SPEC = [
     ("INT",      r"\d+"),
     ("STR",      r'"(?:[^"\\]|\\.)*"'),
     ("ISTR",     r"`(?:[^`\\]|\\.)*`"),
+    ("COMMENT",  r"//[^\n]*"),
     ("FATARROW", r"=>"),
     ("ARROW",    r"->"),
     ("SHIFT",    r"<<|>>"),
@@ -24,7 +25,6 @@ TOKEN_SPEC = [
     ("PUNCT",    r"[()\[\]{},;:=?!~#@.&|^]"),
     ("NAME",     r"[A-Za-z_][A-Za-z0-9_]*"),
     ("NEWLINE",  r"\n"),
-    ("COMMENT",  r"//[^\n]*"),
     ("WS",       r"[ \t\r]+"),
 ]
 _MASTER = re.compile("|".join(f"(?P<{n}>{p})" for n, p in TOKEN_SPEC))
