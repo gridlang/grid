@@ -634,7 +634,11 @@ The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. E
   it; a linter may warn later.
 - **Loop-continue is explicit (L2/L5).** An `@` body exits on a present value, so an
   effectful body ends in `()` to keep looping. No sugar — the `()` keeps the
-  present-vs-nothing rule on the page.
+  present-vs-nothing rule on the page. *(Decided, with evidence: the inverse rule —
+  `()` exits, present continues — was prototyped and breaks reduce, find, while, and
+  every effectful loop, because `()` is exactly what a continuing body produces.
+  Present-exits is the load-bearing polarity: it gives find, break-with-value, and
+  exit-on-condition for free. The body's value is control, by design.)*
 - **Inline `;` (syntax).** A newline ends an expression; `;` is the same separator on a
   single line: `{ sys.print(e); 1 }`.
 - **Precedence (provisional).** A `{block}` binds to the `?` / `#` / `@` on its immediate
