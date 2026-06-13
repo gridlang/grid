@@ -9,7 +9,7 @@ out collecting present results; `@` threads — present body exits the loop, () 
 from .parser import (
     parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin,
     Try, Iter, Block, Match, Fn, Call, Member, Index, Bang, Interp, Destructure,
-    LitPat, UnitPat, BindPat, WildPat, TuplePat,
+    Emit, LitPat, UnitPat, BindPat, WildPat, TuplePat,
 )
 
 
@@ -63,12 +63,31 @@ class Env:
 
 
 class Func:
-    __slots__ = ("params", "body", "root", "fallible")
-    def __init__(self, params, body, root, fallible=False):
+    __slots__ = ("params", "body", "root", "fallible", "stateful")
+    def __init__(self, params, body, root, fallible=False, stateful=False):
         self.params = params
         self.body = body
         self.root = root
         self.fallible = fallible
+        self.stateful = stateful
+
+
+class Stream:
+    """An eagerly-collected stream instance: yields each value, then () forever."""
+    __slots__ = ("items", "cursor")
+    def __init__(self, items):
+        self.items = items
+        self.cursor = 0
+
+    def advance(self):
+        if self.cursor < len(self.items):
+            v = self.items[self.cursor]
+            self.cursor += 1
+            return v
+        return UNIT
+
+
+_emit_stack = []        # stack of collectors; >> appends to the top (one per running stream)
 
 
 class Fallible:
@@ -129,7 +148,10 @@ def eval_node(node, env, topic):
         env.assign(node.name, _arith(node.op, cur, rhs))
         return UNIT
     if t is Fn:
-        return Func(node.params, node.body, env.root(), node.fallible)
+        return Func(node.params, node.body, env.root(), node.fallible, node.stateful)
+    if t is Emit:
+        _emit_stack[-1].append(eval_node(node.value, env, topic))
+        return UNIT
     if t is Call:
         return eval_call(node, env, topic)
     if t is Bang:
@@ -174,10 +196,19 @@ def eval_node(node, env, topic):
 def eval_call(node, env, topic):
     f = eval_node(node.fn, env, topic)
     args = [eval_node(a, env, topic) for a in node.args]
+    if isinstance(f, Stream):                          # s() : next value, or ()
+        return f.advance()
     if isinstance(f, Func):
         call_env = Env(f.root)
         for name, val in zip(f.params, args):
             call_env.define(name, val)
+        if f.stateful:
+            _emit_stack.append([])
+            try:
+                eval_scope_block(f.body, call_env, UNIT)
+            finally:
+                collected = _emit_stack.pop()
+            return Stream(collected)
         if f.fallible:
             try:
                 return Fallible(eval_scope_block(f.body, call_env, UNIT), UNIT)
@@ -289,6 +320,10 @@ def _source_items(v):
         return list(v.items())
     if isinstance(v, (list, tuple, str)):
         return list(enumerate(v))
+    if isinstance(v, Stream):
+        rem = list(enumerate(v.items[v.cursor:]))
+        v.cursor = len(v.items)
+        return rem
     return None
 
 
@@ -361,6 +396,8 @@ def grid_str(v):
         return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
     if isinstance(v, Func):
         return "<fn>"
+    if isinstance(v, Stream):
+        return "<stream>"
     if isinstance(v, Fallible):
         return grid_str(v.ok) if v.err is UNIT else f"!{grid_str(v.err)}"
     return str(v)

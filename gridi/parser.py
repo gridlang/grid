@@ -40,7 +40,9 @@ class Block:     items: list
 @dataclass
 class Match:     pat: object; res: object
 @dataclass
-class Fn:        params: list; body: object; fallible: bool = False   # params: list of names
+class Fn:        params: list; body: object; fallible: bool = False; stateful: bool = False
+@dataclass
+class Emit:      value: object                          # prefix >> (yield from a stream)
 @dataclass
 class Call:      fn: object; args: list
 @dataclass
@@ -206,6 +208,9 @@ class Parser:
     # expressions --------------------------------------------------------------
 
     def parse_expr(self):
+        if self.at("SHIFT", ">>"):                  # prefix >> : emit a stream value
+            self.eat("SHIFT", ">>"); self.nl()
+            return Emit(self.parse_expr())
         return self.parse_or()
 
     def parse_or(self):
@@ -260,7 +265,7 @@ class Parser:
 
     def parse_postfix(self):
         node = self.parse_atom()
-        if self.at("ARROW"):                       # the atom was a function's params
+        if self.at("ARROW") or self.at("SHIFT", ">>"):   # the atom was a function's params
             return self.parse_fn_rest(node)
         while True:
             if self.at("PUNCT", "("):
@@ -298,15 +303,20 @@ class Parser:
         return args
 
     def parse_fn_rest(self, params_node):
-        self.eat("ARROW"); self.nl()
-        self.parse_type()                           # return type T, ignored at runtime
-        fallible = False
-        if self.at("PUNCT", "!"):                   # `-> T ! E`
-            self.eat("PUNCT", "!")
-            self.parse_type()                       # error type E, ignored at runtime
-            fallible = True
+        fallible = stateful = False
+        if self.at("SHIFT", ">>"):                  # stateful stream: `(params) >> T { ... }`
+            self.eat("SHIFT", ">>"); self.nl()
+            self.parse_type()
+            stateful = True
+        else:
+            self.eat("ARROW"); self.nl()
+            self.parse_type()                       # return type T, ignored at runtime
+            if self.at("PUNCT", "!"):               # `-> T ! E`
+                self.eat("PUNCT", "!")
+                self.parse_type()                   # error type E, ignored at runtime
+                fallible = True
         body = self.parse_block()
-        return Fn(self.extract_params(params_node), body, fallible)
+        return Fn(self.extract_params(params_node), body, fallible, stateful)
 
     def extract_params(self, node):
         if isinstance(node, Unit):
