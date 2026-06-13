@@ -1,149 +1,120 @@
-# Types
+# Literals and Types
 
-Grid provides a set of base types that are a core part of the language, accompanied by syntax for specifying literal data of these types.
+> **Layer 4 of the model.** One symbol, one type.
 
-The following table lists the type pattern, an example literal in Grid syntax, and the default value for the type.
+You know what a literal is from its delimiters alone — no context, no inference. The rule
+has two halves: **the bracket tells you the container's shape, and `:` tells you it is
+keyed.** And `{ }` is freed entirely — it is a [block](holes.md), only ever a block — so the
+brace ambiguity that haunts curly-brace languages cannot arise here.
 
-| Type Pattern | Literal Example | Default | Description |
-|--------------|-----------------|---------|-------------|
-| `bool`       | `true`          | `false` | Boolean value |
-| `int`        | `-123`          | `0`     | Integer number |
-| `num`        | `-1.23e4`       | `0.0`   | Real number |
-| `char`       | `'z'`           | `''`    | Single character |
-| `str`        | `"hello"`       | `""`    | String of characters |
-| ``` `{expr}` ``` | ``` `{f()}` ``` | ``` `` ``` | Interpolation string |
-| `[type]`     | `[1, 2, 3]`     | `[]`    | Array of type |
-| `<type:type>`| `<"x": 1, "y": 2>` | `<>`| Map of type to type |
-| `(type,type)`| `(1, "2", [3])` | `()`    | Anonymous tuple of types |
-| `(name:type)`| `(x:1, y:"2", z:[3])` | `(field:default)` | Structured tuple of types |
-| `(type) -> type` | `(i:int) -> str` | `()->()` | Function |
-| `(type) >> type` | `(i:int) >> str` | `()>>()` | Stateful function |
-| `{...}`      | `{ ... }`       | `{}`    | Block |
+## Two containers, two axes
 
-> Each of these types has a *default* value it's initialized with. These default values allow for a clearly defined *truthiness* when used in [pattern matching](pattern.md) or relational [operators](operators.md). The `(field:default)` for structured tuples indicates that whatever the type of the fields in that tuple are, their defaults will be used as the value of the fields.
+There are exactly two bracket families, split by shape:
 
-## Truthiness
+- **`( … )` is fixed** — a set number of (possibly mixed) slots.
+- **`[ … ]` is variable** — any number of (uniform) elements.
 
-Grid evaluates truthiness based on default values. Defaults are considered `false`, whereas non-default values are considered `true`. This allows for simple and clear [conditional](conditional.md) syntax without ambiguity or type coercion. A tuple of all default values is also considered `false`, whereas a tuple with any non-default values is considered `true`.
+and each becomes *keyed* by adding `:` — the same `:` that annotates a type everywhere
+else:
 
-### Example:
+|  | positional | keyed (`key: value`) |
+|---|---|---|
+| **`( )` — fixed** | tuple `(1, "a")` | struct `(x: 1, y: 2)` |
+| **`[ ]` — variable** | list `[1, 2, 3]` | map `["a": 1, "b": 2]` |
 
-```go
-s = ""
-s ? {
-  true => print("String is non-empty")
-  false => print("String is empty")
-}
+A struct is a *named tuple*; a map is a *keyed list* — one structuring move applied to each
+container. The only difference between a struct key and a map key is what sits left of the
+`:`: a struct's is an **identifier** — a field name, fixed in the type (`(x: int)`); a
+map's is a **value** — a key, computed at runtime (`[k: v]`).
+
+## Base types
+
+| type | literal | default | note |
+|---|---|---|---|
+| `()` | `()` | `()` | unit — [the one nothing](present.md) |
+| `int` | `-123` | `0` | |
+| `num` | `-1.23e4` | `0.0` | real |
+| `char` | `'z'` | `'\0'` | a representable default, not the empty `''` |
+| `str` | `"hello"` | `""` | |
+
+There is no `bool` ([Layer 3](present.md#no-bool)). Sized numerics — `u8`, `i32`, … for
+layout and FFI — are a later refinement; bare `int` / `num` for now.
+
+## Lists and maps — both `[ ]`, both indexed, both partial
+
+```grid
+xs = [1, 2, 3]            // [int]
+m  = ["a": 1, "b": 2]     // [str: int]
+xs[1]                     // 2,  or () if out of range
+m["a"]                    // 1,  or () if absent      <- same [] access, same partiality
+[]                        // empty list
+[:]                       // empty map (the : marks it keyed even when empty)
 ```
 
-This is equivalent to:
-```go
-s = ""
-s != "" ? {
-  true => print("String is non-empty")
-  false => print("String is empty")
-}
+Type forms mirror the literals: `[T]` a list, `[K: V]` a map. Map keys are base-type values
+(they must compare for lookup). That indexing is **partial** — a value, or `()` — is what
+unifies `xs[i]` and `m["k"]` with every other operator ([Layer 3](present.md)), and what
+makes iteration "take the next, stop at `()`" ([sources](growth.md#sources)).
+
+## Tuples and structs — both `( )`
+
+```grid
+p = (1, "a")              // (int, str) tuple;  p.0 -> 1
+q = (x: 1, y: 2)          // (x: int, y: int) struct;  q.x -> 1
+(x,)                      // a 1-tuple — `(x)` alone is just grouping
+Point(x: 1)               // named-struct construction; absent fields take defaults
 ```
+
+Type forms: `(A, B)` a tuple, `(name: T)` a struct. In a *type* position the right of a `:`
+is a type; in a *value* position it is a value — which is how `(x: foo)` stays knowable even
+though any label can name a type (below).
+
+## Unions and intersection
+
+`|` carries **union** — a value of either type:
+
+```grid
+T | ()                    // the optional — present is "some", () is "none" (Layer 3)
+Shape | Color             // either type
+```
+
+`&` carries **structural intersection** — a value satisfying both:
+
+```grid
+Person   = (name: str, age: int)
+Employee = Person & (id: int)     // has name, age, AND id
+```
+
+`&` is positional: a **prefix** `&T` is [mutability](substrate.md#the-immutability-hinge)
+(the attached handle); an **infix** `A & B` on types is intersection (and on `int`s it is
+bitwise-and — separated by value-vs-type position). A union defaults to `()` when `()` is a
+member, and otherwise to the default of its first member — so `T | ()` defaults to `()`,
+which is exactly "absent."
+
+## Labels as types, structural fit
+
+Any label may stand as a type; the type is the label's:
+
+```grid
+coords = [1.0, 2.0, 3.0]   // [num]
+origin: coords             // type [num], default []
+```
+
+And typing is **structural**: a value is accepted wherever it carries *at least* the
+required shape — `(name: "Bo", age: 9, id: 1)` is a valid `Person`, because it has
+`Person`'s fields. This is the same "has at least the shape" rule that makes `Employee` pass
+where a `Person` is wanted.
 
 ## Interpolation
 
-String interpolation literals can be used to insert the results of expressions into a string inline.
+A backtick string interpolates `{expr}`:
 
-### Example:
-```go
+```grid
 a = 0
 c = 'z'
-print(`a = {a}, c = {c}`)
+`a = {a}, c = {c}`          // "a = 0, c = z"
 ```
 
-## Tuples
-
-Tuples are flexible data types in Grid used in several contexts. For instance, [function definitions](functions.md) use structural tuples for the parameters, and function calls use anonymous tuples for arguments.
-
-Anonymous tuple literals can be assigned to variables or used as type definitions. Tuple fields can be accessed using the `.` operator.
-
-### Example:
-
-```go
-a = (1, "2", [3])
-f = (g:(int, str)) -> () {
-  print(g.0) // prints 1
-}
-f((1, "2"))
-```
-
-## Custom Types
-
-Structural tuples are the main mechanism for defining custom types in Grid.
-
-### Example:
-
-```go
-Person = (name: str, age: int)
-p = Person(name:"Alice", age:42)
-print(p.name) // prints "Alice"
-```
-
-By assigning a name to a structural tuple, we can use that name as a custom type in other tuples.
-
-### Example:
-
-```go
-Person = (name: str, age: int)
-f = (p: Person) -> () {
-  print(`{p.name}: {p.age}`) // uses the Person structure
-}
-p = Person(name:"Bob", age:35)
-f(p)
-```
-
-## Composing Types
-
-Grid allows combining custom types through composition using the `&` (intersection) and `|` (union) operators.
-
-### Example:
-
-```go
-a = (i: int)
-b = (s: str)
-c = a & b // (i: int, s: str)
-d = a & (i: int, t: (int)) // (i: int, t: (int))
-e = b | c // (s: str)
-```
-
-## Structured Typing
-
-Structured typing in Grid ensures that types interact seamlessly across different contexts, such as function definitions and arguments.
-
-Using the type composition operators, we can define how composite types are evaluated in function arguments as follows:
-
-> A type is structurally valid as an argument to a function if the intersection of the argument's type and the function's definition results in a type matching the function definition.
-
-In other words, the type of an argument is valid as long as it has at least the same fields as the function's definition requires for that argument.
-
-### Example:
-
-```go
-Person = (name: str, age: int)
-Employee = Person & (id: int, job: str)
-printPerson = (p: Person) -> () {
-  print(`{p.name}: {p.age}`)
-}
-
-e = Employee(id: 1, name: "Bob", age: 35, job: "Manager")
-printPerson(e) // valid because Employee intersects with Person
-```
-
-## Block
-
-Blocks in Grid are represented by `{...}` and can contains various types of statements. Blocks have a value they resolve to, and can thus be assigned to [variables](variables.md). The last expression or value in a block is used as its effective value in larger expressions.
-
-### Example:
-
-```go
-dataProcessor = {
-  loadData()
-  processData()
-  exportData()
-}
-```
+The interpolation is brace-nesting–aware, so `{ }` inside an interpolated expression (a map
+literal, a nested string) parses correctly. With the value layer pinned, the remaining
+pieces — functions, defer, fallibles, streams — grow [From the Seed](growth.md).

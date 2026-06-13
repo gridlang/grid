@@ -58,11 +58,8 @@ sys.println(`  add(2,3)={add(2, 3)}  apply(inc,9)={apply(inc, 9)}  5.inc()={5.in
 sys.println("")
 sys.println("-- ? : match the topic; literals, binds, wildcard, guards, tuples --")
 grade = (n: int) -> str {
-  n ? {
-    n >= 90 ? "A"          // guard arm
-    n >= 80 ? "B"
-    score   => `C ({score})`   // bind arm: name the topic
-  }
+  // a ladder of *tests* is a chained ?: (right-associative), not a match block
+  n >= 90 ? "A" : n >= 80 ? "B" : `C ({n})`
 }
 quadrant = (p: (int, int)) -> str {
   p ? {

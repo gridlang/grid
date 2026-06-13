@@ -55,7 +55,7 @@ read_request = (c: net.Conn) -> Request ! str {
   parts = str.words(net.readline(c)!)          // ! : propagate a read failure
   parts ? {
     [method, path, _] => {                      // a 3-element list pattern
-      @ { net.readline(c)! == "" }              // skip headers: read until a blank line
+      { net.readline(c)! != "" } @ { () }       // skip headers: loop while non-blank, eat the blank
       body = net.read(c, 8192)!
       (method: method, path: path, body: body)
     }

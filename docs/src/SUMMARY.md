@@ -1,26 +1,31 @@
 # Summary
 
 [Introduction](index.md)
+[Why Grid?](why.md)
 
-# Source
+# The Language
 
-- [Structure](structure.md)
-- [Scope](scope.md)
-- [Keywords](keywords.md)
+- [Scope is Ownership](substrate.md)
+  - [Holes](holes.md)
+- [The Triad: `?` `#` `@`](triad.md)
+- [Present and Nothing](present.md)
+  - [Try and Branch](try-branch.md)
+  - [Match and Commit](match.md)
+- [Literals and Types](types.md)
+- [From the Seed](growth.md)
 
-# Language Features
+# Reference
 
-- [Functions](functions.md)
-- [Types](types.md)
-- [Variables](variables.md)
-- [Memory Management](memory.md)
-- [Operators](operators.md)
-- [Pattern Matching](pattern.md)
-- [Flow Control](flow-control.md)
-  - [Conditional](conditional.md)
-  - [Grid](grid.md)
-  - [Loop](loop.md)
+- [Grammar](ref/grammar.md)
+- [Operators and Precedence](ref/operators.md)
+- [Patterns](ref/patterns.md)
 
-# Examples
+# In Practice
 
+- [A Tour of Grid](examples/tour.md)
 - [HTTP Server](examples/http-server.md)
+- [Control-Flow Patterns](examples/control.md)
+
+# Design Notes
+
+- [Decisions](design/decisions.md)
