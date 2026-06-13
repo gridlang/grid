@@ -32,6 +32,8 @@ class InPlace:   name: str; op: str; value: object
 @dataclass
 class Bin:       op: str; l: object; r: object
 @dataclass
+class Range:     lo: object; hi: object               # a .. b (inclusive)
+@dataclass
 class Try:       subj: object; cons: object
 @dataclass
 class Iter:      op: str; subj: object; block: object   # op in {"#", "@"}; subj may be None
@@ -214,6 +216,15 @@ class Parser:
             return InPlace(name, op, self.parse_expr())
         return self.parse_expr()
 
+    def parse_consequent(self):
+        # the (non-block) right-hand side of `?` may be an in-place op
+        if self.at("NAME") and self.peek().kind == "INPLACE":
+            name = self.eat("NAME").val
+            op = self.eat("INPLACE").val[0]
+            self.nl()
+            return InPlace(name, op, self.parse_comb())
+        return self.parse_comb()
+
     def parse_type(self):
         # types are not checked at runtime — skip a type expression by tokens,
         # stopping at the punctuation that ends it (=, comma, closing, !, {, …)
@@ -266,7 +277,7 @@ class Parser:
         while True:
             if self.at("PUNCT", "?"):
                 self.eat("PUNCT", "?"); self.nl()
-                cons = self.parse_block() if self.at("PUNCT", "{") else self.parse_comb()
+                cons = self.parse_block() if self.at("PUNCT", "{") else self.parse_consequent()
                 left = Try(left, cons)
             elif self.at("PUNCT", "#") or self.at("PUNCT", "@"):
                 op = self.eat("PUNCT").val
@@ -276,11 +287,18 @@ class Parser:
                 return left
 
     def parse_cmp(self):
-        l = self.parse_add()
+        l = self.parse_range()
         while self.cur().kind in ("EQOP", "CMP"):
             op = self.eat(self.cur().kind).val
             self.nl()
-            l = Bin(op, l, self.parse_add())
+            l = Bin(op, l, self.parse_range())
+        return l
+
+    def parse_range(self):
+        l = self.parse_add()
+        while self.at("RANGE"):
+            self.eat("RANGE"); self.nl()
+            l = Range(l, self.parse_add())
         return l
 
     def parse_add(self):
@@ -465,6 +483,8 @@ class Parser:
                 break
             items.append(self.parse_expr()); self.nl()
         self.eat("PUNCT", "]")
+        if len(items) == 1 and isinstance(items[0], Range):   # [1..5] is the range itself
+            return items[0]
         return ListLit(items)
 
     def parse_interp(self, raw):

@@ -82,3 +82,8 @@ def test_while_loop_over_condition():
 def test_chained_fanout():
     src = "[1, 2, 3] # { (_, n) => n + 1 } # { (_, n) => n * 10 }"
     assert run(src) == [20, 30, 40]
+
+
+def test_guard_consequent_inplace():
+    # a `?` guard whose consequent is an in-place op: `n > 2 ? big += n`
+    assert run("big: &int = 0\n1..5 @ { (_, n) => n > 2 ? big += n }\nbig") == 12

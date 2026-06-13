@@ -22,6 +22,7 @@ TOKEN_SPEC = [
     ("ANDAND",   r"&&"),
     ("INPLACE",  r"\+=|-=|\*=|/="),
     ("OP",       r"[+\-*/%]"),
+    ("RANGE",    r"\.\."),
     ("PUNCT",    r"[()\[\]{},;:=?!~#@.&|^]"),
     ("NAME",     r"[A-Za-z_][A-Za-z0-9_]*"),
     ("NEWLINE",  r"\n"),

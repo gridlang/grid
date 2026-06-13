@@ -7,7 +7,7 @@ detached scope (it captures the module root, never the caller's locals). `#` fan
 out collecting present results; `@` threads — present body exits the loop, () continues.
 """
 from .parser import (
-    parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin,
+    parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin, Range,
     Try, Iter, Block, Match, Fn, Call, Member, MethodCall, Index, Bang, Interp,
     Destructure, Emit, Defer, ModuleDecl, ImportDecl,
     LitPat, UnitPat, BindPat, WildPat, TuplePat,
@@ -113,6 +113,9 @@ def _str_words(s):
 def _str_join(xs, sep=""):
     return sep.join(grid_str(x) for x in xs)
 
+def _present_if(cond, val):
+    return val if cond else UNIT
+
 def _net_unavailable(*_a):
     raise RuntimeError("net.* needs real I/O; not available in the validator")
 
@@ -126,6 +129,13 @@ def _make_stdlib():
             "join": _str_join,
             "upper": lambda s: s.upper(),
             "lower": lambda s: s.lower(),
+            "len": lambda s: len(s),
+            "chars": lambda s: list(s),
+            "split": lambda s, sep: s.split(sep),
+            "replace": lambda s, a, b: s.replace(a, b),
+            "contains": lambda s, sub: _present_if(sub in s, sub),
+            "starts": lambda s, pre: _present_if(s.startswith(pre), pre),
+            "ends": lambda s, suf: _present_if(s.endswith(suf), suf),
         },
         "sys": {
             "print": lambda *a: (print("".join(grid_str(x) for x in a), end=""), UNIT)[1],
@@ -190,6 +200,8 @@ def eval_node(node, env, topic):
     if t is Bind:
         env.define(node.name, eval_node(node.value, env, topic) if node.value is not None else UNIT)
         return UNIT
+    if t is Range:
+        return eval_range(eval_node(node.lo, env, topic), eval_node(node.hi, env, topic))
     if t is InPlace:
         cur = env.get(node.name)
         rhs = eval_node(node.value, env, topic)
@@ -308,8 +320,18 @@ def eval_member(obj, key):
         if isinstance(obj, (tuple, list)) and -len(obj) <= key < len(obj):
             return obj[key]
         return UNIT
-    if isinstance(obj, dict):                          # struct field
+    if key == "len" and isinstance(obj, (list, tuple, str, dict)):
+        return len(obj)
+    if isinstance(obj, dict):                          # struct field / namespace member
         return obj.get(key, UNIT)
+    return UNIT
+
+
+def eval_range(lo, hi):
+    if isinstance(lo, int) and isinstance(hi, int):
+        return list(range(lo, hi + 1))
+    if isinstance(lo, str) and isinstance(hi, str) and len(lo) == 1 and len(hi) == 1:
+        return [chr(c) for c in range(ord(lo), ord(hi) + 1)]
     return UNIT
 
 
@@ -478,11 +500,26 @@ def grid_str(v):
     return str(v)
 
 
-def run(src):
+def make_global_env():
     g = Env()
-    for name in ("int", "num", "char", "str"):          # base type names as inert tags
+    for name in ("int", "num", "char"):                 # base type names as inert tags
         g.define(name, TypeTag(name))
-    try:
-        return eval_scope_block(parse(src), g, UNIT)
-    except Propagate as p:
-        raise RuntimeError(f"unhandled failure: {grid_str(p.err)}")
+    for name, ns in STDLIB.items():                      # str / sys / net available by default
+        g.define(name, ns)
+    return g
+
+
+class Session:
+    """A persistent evaluation context — the REPL keeps one across inputs."""
+    def __init__(self):
+        self.env = make_global_env()
+
+    def eval(self, src):
+        try:
+            return eval_scope_block(parse(src), self.env, UNIT)
+        except Propagate as p:
+            raise RuntimeError(f"unhandled failure: {grid_str(p.err)}")
+
+
+def run(src):
+    return Session().eval(src)

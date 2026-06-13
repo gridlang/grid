@@ -1,0 +1,17 @@
+// A tiny tour of Grid — run with:  python -m gridi examples/tour.grid
+
+square = (n: int) -> int { n * n }
+
+// range + fan-out (map) + filter (() drops), then reduce
+squares = 1..10 # { (_, n) => square(n) }
+big: &int = 0
+squares @ { (_, s) => s > 25 ? big += s }     // sum the squares over 25
+
+// fallible + ! propagation
+checked = (n: int) -> int ! str {
+  n > 0 ? n || `not positive: {n}`!
+}
+v, e = checked(big)
+
+// interpolation + UFCS + .len
+`squares={squares} count={squares.len} bigsum={big} checked={v} err={e}`
