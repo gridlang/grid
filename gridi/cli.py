@@ -17,9 +17,60 @@ def _incomplete(err):
     return "EOF" in str(err)
 
 
+def _lookup(env, name):
+    e = env
+    while e is not None:
+        if name in e.vars:
+            return e.vars[name]
+        e = e.parent
+    return None
+
+
+def complete(env, text):
+    """Tab-completion candidates for `text` against a live environment.
+
+    After a dot, complete a namespace's / struct's members; otherwise complete
+    visible bindings (and the two declaration words).
+    """
+    if "." in text:
+        obj, _, prefix = text.rpartition(".")
+        target = _lookup(env, obj)
+        if isinstance(target, dict):
+            return sorted(f"{obj}.{k}" for k in target if k.startswith(prefix))
+        return []
+    names = set(("module", "import"))
+    e = env
+    while e is not None:
+        names.update(e.vars.keys())
+        e = e.parent
+    return sorted(n for n in names if n.startswith(text))
+
+
+def _install_readline(session):
+    try:
+        import readline
+    except ImportError:
+        return
+    # keep '.' and identifier chars OUT of the delimiters so a dotted path
+    # (str.li) is treated as one completion token
+    readline.set_completer_delims(" \t\n`~!@#$%^&*()-=+[{]}\\|;:'\",<>/?")
+
+    def completer(text, state):
+        if state == 0:
+            completer.matches = complete(session.env, text)
+        return completer.matches[state] if state < len(completer.matches) else None
+
+    readline.set_completer(completer)
+    if "libedit" in (getattr(readline, "__doc__", "") or ""):
+        readline.parse_and_bind("bind ^I rl_complete")
+    else:
+        readline.parse_and_bind("tab: complete")
+
+
 def repl():
     print(BANNER)
     session = Session()
+    _install_readline(session)              # tab-completion, history, line editing
     buf = []
     while True:
         prompt = "» " if not buf else "… "
