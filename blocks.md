@@ -3,7 +3,8 @@
 *Status: design resolution, converged. Resolves `dispatch.md` problems #1 (effectful
 match fall-through) and #3 (`?`-block scoping), and **supersedes `dispatch.md`'s Option A**
 (the literal/bind/wildcard pattern-kind split — no longer needed). Pairs with `branch.md`
-(`?:`). Doc-level only; no interpreter changes yet.*
+(`?:`). **Implemented** on the `vision` branch — interpreter, tests (~85 green), and the
+MODEL.md merge are all done; §7 below records what changed.*
 
 ## TL;DR
 
@@ -236,26 +237,25 @@ introduced only by a combinator (`subject ? …`, `xs @ …`, `xs # …`).
 
 ---
 
-## 7. Implementation consequences (for the eventual MODEL.md merge + TDD)
+## 7. Implementation (done)
 
-Doc-level today; when adopted, the work is:
+Implemented on the `vision` branch — interpreter, tests, and the MODEL.md merge. What
+changed:
 
-1. **Lift `=>` into the expression grammar.** Today it is parsed only at statement level
-   (an expression followed by `=>` becomes a `Match`), so a bare `5 ? x => x` is a parse
-   error. `=>` must become an operator that slots **just under `?:`** (so
-   `f() ? x => g(x) : h()` frames as then = `x => g(x)`, else = `h()`, and `x => a || b` is
-   `x => (a || b)`). Its left side parses as a pattern; its right side as a full expression.
-2. **Retire `eval_match_block`.** One evaluator for all blocks: run statements in one scope,
-   commit on a matching `=>`, else return the last statement's value.
-3. **Thread the topic as the last present value**, `()`-transparent; a matching `=>` commits.
-   `?`-consequents already pass the subject's value inward (keep that — it's if-let).
-4. **Precedence (firm points):** `?:` loosest, right-associative (`branch.md`); `=>` just
-   under `?:`; `||`/`&&`/comparison/arithmetic tighter. The relative order of `?:`/`=>` vs
-   the combinators `@ # >>` stays academic (matches and branches almost always live inside
-   braced bodies) — settle it only if a concrete top-level case demands it.
-5. **Rewrites:** none forced by this doc beyond what `branch.md` already implies; the find/
-   guard/reduce examples are unchanged. (Cross-arm guard ladders, if any exist, move to
-   in-arm `?:`.)
+1. **`=>` lifted into the expression grammar** — a `parse_match` level just under `?:`, so
+   a bare `5 ? x => x` parses; its left side is a pattern, its right side a full
+   (arm-result) expression that still allows `+=` / `>>` / `~`. [`gridi/parser.py`]
+2. **`eval_match_block` retired** — one evaluator for all blocks: run statements in one
+   scope, commit on a matching `=>`, else return the last statement's value.
+   [`gridi/interp.py`]
+3. **Topic threads as the last present value**, `()`-transparent; a matching `=>` commits;
+   `?`-consequents pass the subject's value inward (if-let).
+4. **Precedence:** `?:` loosest (right-associative), `=>` just under it,
+   `||`/`&&`/comparison/arithmetic tighter; the `?:`/`=>`-vs-`@ # >>` order stayed academic
+   (matches and branches live inside braced bodies).
+5. **Examples migrated** — the four `? … ||`-as-else sites moved to `?:`, `classify` is a
+   chained-`?:` ladder, and `examples/control-converged.grid` showcases the new patterns
+   (golden-tested). find / guard / reduce examples are unchanged.
 
 ---
 

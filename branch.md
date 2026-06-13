@@ -282,9 +282,9 @@ lets you handle each explicitly. (Effectful dispatch arms commit on match per `b
 
 ## 8. Open questions
 
-1. **Migration sweep.** Rewriting every `? … ||`-as-else to `? … :` across `MODEL.md` and
-   the examples is mechanical but worth doing in one pass so nothing silently reparses.
-2. **Precedence vs postfix `!`.** In `cond ? a : error!`, `!` binds to `error` inside the
-   else. Expected to be fine (postfix is tightest); needs a test case.
-3. **Exhaustiveness.** Orthogonal to `?:`, but related: should a dispatch with no matching
-   arm and no `_` warn, or stay `()` (current)? A separate decision.
+1. **Migration sweep** — *resolved.* Every `? … ||`-as-else in `MODEL.md` and the examples
+   is now `? … :`.
+2. **Precedence vs postfix `!`** — *resolved.* `cond ? a : error!` binds `!` to `error` in
+   the else; covered by the `half` fallible test (`… ? n / 2 : "odd"!`).
+3. **Exhaustiveness.** Still open: should a dispatch with no matching arm and no `_` warn,
+   or stay `()` (current)? A separate, later decision.
