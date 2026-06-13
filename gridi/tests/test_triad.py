@@ -79,6 +79,21 @@ def test_while_loop_over_condition():
     assert run("i: &int = 0\ni < 3 @ { i += 1 }\ni") == 3
 
 
+def test_while_loop_over_collection_valued_condition():
+    # `!=` yields its right operand, so this condition *evaluates to a string*.
+    # @ must still treat it as a condition (loop while present, stop when it goes
+    # ()), decided by the subject's syntax — a relation — not by the runtime type
+    # of its value. (Regression: the old type-guess saw a str, called it a source,
+    # and "iterated" zero characters, so the body never ran.)
+    src = (
+        'lines = ["a", "b", "", "c"]\n'
+        "i: &int = 0\n"
+        'lines[i] != "" @ { i += 1 }\n'
+        "i"
+    )
+    assert run(src) == 2
+
+
 def test_chained_fanout():
     src = "[1, 2, 3] # { (_, n) => n + 1 } # { (_, n) => n * 10 }"
     assert run(src) == [20, 30, 40]

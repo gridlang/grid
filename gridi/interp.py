@@ -425,6 +425,18 @@ def _source_items(v):
     return None
 
 
+# An `@` subject that is a relational/logical comparison is a *condition* (loop
+# while present); anything else is a *source* (iterate it). The split is decided
+# by the subject's *syntax* — its node — never by the runtime type of its value,
+# so a condition whose value happens to be a collection (e.g. `a != ""` yields
+# the string `""`) is not mistaken for a source.
+_REL_OPS = frozenset({"==", "!=", "<", "<=", ">", ">=", "&&", "||"})
+
+
+def _is_condition(subj):
+    return isinstance(subj, Bin) and subj.op in _REL_OPS
+
+
 def eval_iter(node, env, topic):
     if node.op == "#":
         src = eval_node(node.subj, env, topic)
@@ -445,21 +457,23 @@ def eval_iter(node, env, topic):
             if present(v):
                 return v
 
-    first = eval_node(node.subj, env, topic)
-    items = _source_items(first)
-    if items is not None:                              # thread over a collection
-        for step in items:
-            v = eval_scope_block(node.block, Env(env), step)
+    if _is_condition(node.subj):                       # thread while a condition holds
+        cond = eval_node(node.subj, env, topic)
+        while present(cond):
+            v = eval_scope_block(node.block, Env(env), cond)
             if present(v):
                 return v
+            cond = eval_node(node.subj, env, topic)
         return UNIT
 
-    cond = first                                       # thread while a condition holds
-    while present(cond):
-        v = eval_scope_block(node.block, Env(env), cond)
+    first = eval_node(node.subj, env, topic)           # thread over a collection
+    items = _source_items(first)
+    if items is None:
+        return UNIT
+    for step in items:
+        v = eval_scope_block(node.block, Env(env), step)
         if present(v):
             return v
-        cond = eval_node(node.subj, env, topic)
     return UNIT
 
 

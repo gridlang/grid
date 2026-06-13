@@ -216,13 +216,18 @@ nums @ { n => sum += n }     // reduce — sum threads through; afterward it is 
 What you thread over decides the shape:
 
 - a **collection** → the block runs once per element — **reduce**;
-- a **condition** → the input is re-checked each step and the block runs while it holds
-  — **loop**.
+- a **condition** (a relational or logical test — `<`, `!=`, `&&`, …) → the input is
+  re-checked each step and the block runs while it holds — **loop**.
 
 ```
 i: &int = 0
 i < 4 @ { i += 1 }          // loop — runs while i < 4; afterward i is 4
 ```
+
+Which shape `@` runs is read from the *form* of the subject, not the runtime type of its
+value: a relational/logical test is a condition, anything else is a source. So a test
+whose value is itself a collection — `line != ""` yields the string `""` — still loops;
+it is a relation, not a thing to iterate.
 
 Reduce and loop are not two constructs; they are `@` handed two kinds of input. Because
 `@` is sequential, its block *may* write a captured `&` — which is precisely why the
@@ -634,11 +639,27 @@ The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. E
   it; a linter may warn later.
 - **Loop-continue is explicit (L2/L5).** An `@` body exits on a present value, so an
   effectful body ends in `()` to keep looping. No sugar — the `()` keeps the
-  present-vs-nothing rule on the page. *(Decided, with evidence: the inverse rule —
-  `()` exits, present continues — was prototyped and breaks reduce, find, while, and
-  every effectful loop, because `()` is exactly what a continuing body produces.
-  Present-exits is the load-bearing polarity: it gives find, break-with-value, and
-  exit-on-condition for free. The body's value is control, by design.)*
+  present-vs-nothing rule on the page. This rests on an **invariant**: every continuing
+  form yields `()` — a binding, an in-place `+=`, an emit `>>`, a defer `~` all produce
+  `()` — so the natural shape of a reduce/loop body already loops. The one discipline:
+  if an effectful body's *last* expression would be present (e.g. a call that returns a
+  value), end it with `()` (or discard with `_ = …`) so it doesn't exit early.
+- **Why present-exits, not the alternatives (decided, evidence-backed).** Two other
+  rules were prototyped against the suite and rejected — and they are *not* the same
+  rule:
+    - *The flip* — `()` exits, present continues — is **incoherent**: `()` is exactly
+      what a continuing body produces (see the invariant above), so every effectful loop
+      would exit on its first step. (13 tests fail.)
+    - *Body-value-is-not-a-signal* — `@` runs only to source-exhaustion / condition-`()`
+      and discards the body — is **coherent but collapses the triad**: it makes `@` and
+      `#` the same run-to-exhaustion iteration, erasing `@`'s first-success / find
+      meaning, and forces every computed-termination loop through the condition form.
+      (3 tests fail, all the find idiom.)
+  Present-exits is the goal-directed reading Grid is built on (typed Icon): `#` drives a
+  body to **all** its successes (collect every present), `@` drives it to the **first**
+  (find / break-with-value), and reduce is the degenerate case where the body never
+  succeeds — it always yields `()`, so `@` runs to exhaustion threading the `&`. One
+  rule; the body's value is control, by design.
 - **Inline `;` (syntax).** A newline ends an expression; `;` is the same separator on a
   single line: `{ sys.print(e); 1 }`.
 - **Precedence (provisional).** A `{block}` binds to the `?` / `#` / `@` on its immediate
