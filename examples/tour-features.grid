@@ -1,0 +1,134 @@
+// tour-features.grid — a runnable tour of (nearly) every Grid construct.
+// It prints each construct and the value it produces.
+//     python -m gridi examples/tour-features.grid
+
+module main
+import sys
+import str
+
+sys.println("=== Grid feature tour ===")
+
+// ── Literals ────────────────────────────────────────────────────────────────
+sys.println("")
+sys.println("-- literals (one symbol, one type) --")
+sys.println(`  int 42        => {42}`)
+sys.println(`  num -1.5      => {-1.5}`)
+sys.println(`  char 'z'      => {'z'}`)
+sys.println(`  str "hi"      => {"hi"}`)
+sys.println(`  unit ()       => {()}`)
+sys.println(`  list [1,2,3]  => {[1, 2, 3]}`)
+sys.println(`  tuple (1,"a") => {(1, "a")}`)
+sys.println(`  struct        => {(x: 1, y: 2)}`)
+sys.println(`  range 1..5    => {1..5}`)
+sys.println(`  char range    => {'a'..'e'}`)
+
+// ── Success and nothing : present vs () ─────────────────────────────────────
+sys.println("")
+sys.println("-- present vs () : the keystone (no bool, no null) --")
+sys.println(`  0 ? "yes"     => {0 ? "yes"}     (a data 0 is PRESENT)`)
+sys.println(`  () ? "yes"    => {() ? "yes"}      (only () is absent)`)
+sys.println(`  "a" || "b"    => {"a" || "b"}`)
+sys.println(`  () || "b"     => {() || "b"}`)
+
+// ── Partial operators : value or () ─────────────────────────────────────────
+sys.println("")
+sys.println("-- every operator is partial --")
+sys.println(`  10 / 0        => {10 / 0}        (no divide-by-zero crash)`)
+sys.println(`  [1,2,3][9]    => {[1, 2, 3][9]}        (out of bounds)`)
+sys.println(`  3 < 5         => {3 < 5}         (relations yield the right operand)`)
+sys.println(`  1 < 2 < 3     => {1 < 2 < 3}         (so comparisons chain)`)
+
+// ── Bindings and mutation ───────────────────────────────────────────────────
+sys.println("")
+sys.println("-- bindings : immutable, & mutable, += in place --")
+fixed = 10
+counter: &int = 0
+counter += 5
+sys.println(`  fixed={fixed}  counter (after += 5)={counter}`)
+
+// ── Functions : first-class + UFCS ──────────────────────────────────────────
+sys.println("")
+sys.println("-- functions, first-class values, UFCS --")
+add = (a: int, b: int) -> int { a + b }
+inc = (n: int) -> int { n + 1 }
+apply = (f: (int) -> int, n: int) -> int { f(n) }
+sys.println(`  add(2,3)={add(2, 3)}  apply(inc,9)={apply(inc, 9)}  5.inc()={5.inc()}`)
+
+// ── ? : branch / pattern match ──────────────────────────────────────────────
+sys.println("")
+sys.println("-- ? : match the topic; literals, binds, wildcard, guards, tuples --")
+grade = (n: int) -> str {
+  n ? {
+    n >= 90 ? "A"          // guard arm
+    n >= 80 ? "B"
+    score   => `C ({score})`   // bind arm: name the topic
+  }
+}
+quadrant = (p: (int, int)) -> str {
+  p ? {
+    (0, 0) => "origin"     // tuple literal pattern
+    (x, 0) => "on x-axis"  // tuple pattern, binds x
+    (0, y) => "on y-axis"
+    (x, y) => "in the plane"
+  }
+}
+sys.println(`  grade: {grade(95)} {grade(83)} {grade(71)}`)
+sys.println(`  quadrant: {quadrant((0, 0))} / {quadrant((4, 0))} / {quadrant((3, 2))}`)
+
+// ── # : fan-out (map and filter) ────────────────────────────────────────────
+sys.println("")
+sys.println("-- # : fan-out — map, and filter by yielding () --")
+sys.println(`  squares : {1..6 # { (_, n) => n * n }}`)
+sys.println(`  evens   : {1..10 # { (_, n) => n % 2 == 0 ? n }}`)
+
+// ── @ : thread (reduce, loop, find) ─────────────────────────────────────────
+sys.println("")
+sys.println("-- @ : thread — reduce, loop, find --")
+total: &int = 0
+1..5 @ { (_, n) => total += n }
+i: &int = 0
+i < 3 @ { i += 1 }
+sys.println(`  reduce 1..5 = {total}   loop until i<3 fails: i = {i}`)
+sys.println(`  find first n with n*n>40 : {1..100 @ { (_, n) => n * n > 40 ? n }}`)
+
+// ── Fallibles : -> T ! E, ! to raise / propagate ────────────────────────────
+sys.println("")
+sys.println("-- fallibles : -> T ! E, the ! operator --")
+half = (n: int) -> int ! str { n % 2 == 0 ? n / 2 || `{n} is odd`! }
+v1, e1 = half(8)
+v2, e2 = half(7)
+sys.println(`  half(8) -> value {v1}, error {e1}`)
+sys.println(`  half(7) -> value {v2}, error {e2}`)
+
+// ── Streams : >> emits; exhaustion is () ────────────────────────────────────
+sys.println("")
+sys.println("-- streams : >> emits, exhaustion is () --")
+each = (xs: [int]) >> int { xs @ { (_, x) => >> x } }
+s = each([10, 20, 30])
+sys.println(`  pull 4 times: {s()} {s()} {s()} {s()}   (last is exhaustion)`)
+
+// ── .len, maps, str.* ───────────────────────────────────────────────────────
+sys.println("")
+sys.println("-- members, maps, stdlib --")
+sides = ["triangle": 3, "square": 4, "pentagon": 5]
+sys.println(`  [1,2,3].len={[1, 2, 3].len}  "hello".len={"hello".len}  sides["square"]={sides["square"]}`)
+sys.println(`  str.upper("hi")={str.upper("hi")}  str.words("a b c")={str.words("a b c")}`)
+
+// ── Defer : ~ runs at scope exit ────────────────────────────────────────────
+sys.println("")
+sys.println("-- defer : ~ runs at scope exit (LIFO) --")
+withCleanup = (name: str) -> () {
+  ~sys.println(`    [3] deferred cleanup for {name}`)
+  sys.println(`    [1] opened {name}`)
+  sys.println(`    [2] using {name}`)
+}
+withCleanup("file")
+
+// ── Finale : it all composes ────────────────────────────────────────────────
+sys.println("")
+sys.println("-- one line that uses most of it --")
+big: &int = 0
+1..10 # { (_, n) => n * n } @ { (_, sq) => sq > 25 ? big += sq }
+sys.println(`  sum of squares over 25 in 1..10 = {big}`)
+sys.println("")
+sys.println("=== done ===")

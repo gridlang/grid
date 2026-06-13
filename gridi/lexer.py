@@ -12,6 +12,7 @@ TOKEN_SPEC = [
     ("INT",      r"\d+"),
     ("STR",      r'"(?:[^"\\]|\\.)*"'),
     ("ISTR",     r"`(?:[^`\\]|\\.)*`"),
+    ("CHAR",     r"'(?:[^'\\]|\\.)'"),
     ("COMMENT",  r"//[^\n]*"),
     ("FATARROW", r"=>"),
     ("ARROW",    r"->"),
@@ -29,6 +30,25 @@ TOKEN_SPEC = [
     ("WS",       r"[ \t\r]+"),
 ]
 _MASTER = re.compile("|".join(f"(?P<{n}>{p})" for n, p in TOKEN_SPEC))
+
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0",
+            "\\": "\\", '"': '"', "`": "`", "'": "'"}
+
+
+def _unescape(s):
+    # process \-escapes by hand so multi-byte UTF-8 (é, —, …) survives intact
+    # (the unicode_escape codec mangles non-ASCII)
+    out = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == "\\" and i + 1 < n:
+            out.append(_ESCAPES.get(s[i + 1], s[i + 1]))
+            i += 2
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
 
 # A newline after any of these is swallowed (the expression continues).
 _CONT = {
@@ -71,8 +91,8 @@ def lex(src):
                 toks.append(Tok("NL", "\n", line))
             line += 1
             continue
-        if kind == "STR" or kind == "ISTR":
-            val = bytes(val[1:-1], "utf-8").decode("unicode_escape")
+        if kind in ("STR", "ISTR", "CHAR"):
+            val = _unescape(val[1:-1])
         toks.append(Tok(kind, val, line))
     if pos != len(src):
         raise SyntaxError(f"unexpected {src[pos:]!r} on line {line}")

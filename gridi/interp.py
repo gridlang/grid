@@ -7,7 +7,7 @@ detached scope (it captures the module root, never the caller's locals). `#` fan
 out collecting present results; `@` threads — present body exits the loop, () continues.
 """
 from .parser import (
-    parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin, Range,
+    parse, Lit, Unit, Name, Tuple, ListLit, MapLit, StructLit, Bind, InPlace, Bin, Range,
     Try, Iter, Block, Match, Fn, Call, Member, MethodCall, Index, Bang, Interp,
     Destructure, Emit, Defer, ModuleDecl, ImportDecl,
     LitPat, UnitPat, BindPat, WildPat, TuplePat,
@@ -139,6 +139,7 @@ def _make_stdlib():
         },
         "sys": {
             "print": lambda *a: (print("".join(grid_str(x) for x in a), end=""), UNIT)[1],
+            "println": lambda *a: (print("".join(grid_str(x) for x in a)), UNIT)[1],
         },
         "net": {k: _net_unavailable for k in
                 ("listen", "accept", "readline", "read", "write", "close")},
@@ -195,6 +196,8 @@ def eval_node(node, env, topic):
         return tuple(eval_node(i, env, topic) for i in node.items)
     if t is ListLit:
         return [eval_node(i, env, topic) for i in node.items]
+    if t is MapLit:
+        return {eval_node(k, env, topic): eval_node(v, env, topic) for k, v in node.entries}
     if t is StructLit:
         return {n: eval_node(v, env, topic) for n, v in node.fields}
     if t is Bind:

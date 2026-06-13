@@ -24,6 +24,8 @@ class Tuple:     items: list
 @dataclass
 class ListLit:   items: list
 @dataclass
+class MapLit:    entries: list                         # list of (key_node, value_node)
+@dataclass
 class StructLit: fields: list           # list of (name, value_node)
 @dataclass
 class Bind:      name: str; value: object; mutable: bool = False
@@ -316,11 +318,17 @@ class Parser:
         return l
 
     def parse_mul(self):
-        l = self.parse_postfix()
+        l = self.parse_unary()
         while self.at("OP", "*") or self.at("OP", "/") or self.at("OP", "%"):
             op = self.eat("OP").val; self.nl()
-            l = Bin(op, l, self.parse_postfix())
+            l = Bin(op, l, self.parse_unary())
         return l
+
+    def parse_unary(self):
+        if self.at("OP", "-"):                       # prefix minus: -x  ==  0 - x
+            self.eat("OP", "-"); self.nl()
+            return Bin("-", Lit(0), self.parse_unary())
+        return self.parse_postfix()
 
     def parse_postfix(self):
         if self.at("PUNCT", "(") and self._paren_is_params():
@@ -427,7 +435,7 @@ class Parser:
             self.i += 1; return Lit(int(t.val))
         if t.kind == "FLOAT":
             self.i += 1; return Lit(float(t.val))
-        if t.kind == "STR":
+        if t.kind == "STR" or t.kind == "CHAR":
             self.i += 1; return Lit(t.val)
         if t.kind == "ISTR":
             self.i += 1; return self.parse_interp(t.val)
@@ -483,7 +491,23 @@ class Parser:
         self.eat("PUNCT", "["); self.nl()
         if self.at("PUNCT", "]"):
             self.eat("PUNCT", "]"); return ListLit([])
-        items = [self.parse_expr()]; self.nl()
+        if self.at("PUNCT", ":"):                              # [:] is the empty map
+            self.eat("PUNCT", ":"); self.nl(); self.eat("PUNCT", "]")
+            return MapLit([])
+        first = self.parse_expr(); self.nl()
+        if self.at("PUNCT", ":"):                              # ["k": v, …] is a map
+            self.eat("PUNCT", ":"); self.nl()
+            entries = [(first, self.parse_expr())]; self.nl()
+            while self.at("PUNCT", ","):
+                self.eat("PUNCT", ","); self.nl()
+                if self.at("PUNCT", "]"):
+                    break
+                k = self.parse_expr(); self.nl()
+                self.eat("PUNCT", ":"); self.nl()
+                entries.append((k, self.parse_expr())); self.nl()
+            self.eat("PUNCT", "]")
+            return MapLit(entries)
+        items = [first]
         while self.at("PUNCT", ","):
             self.eat("PUNCT", ","); self.nl()
             if self.at("PUNCT", "]"):
@@ -498,15 +522,24 @@ class Parser:
         parts = []
         buf = ""
         i = 0
-        while i < len(raw):
+        n = len(raw)
+        while i < n:
             c = raw[i]
             if c == "{":
-                end = raw.index("}", i)              # no nested braces in interpolation
+                depth = 1                            # find the matching }, allowing nesting
+                j = i + 1
+                while j < n and depth > 0:
+                    if raw[j] == "{":
+                        depth += 1
+                    elif raw[j] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
                 if buf:
                     parts.append(("lit", buf)); buf = ""
-                expr = Parser(lex(raw[i + 1:end])).parse_expr()
-                parts.append(("expr", expr))
-                i = end + 1
+                parts.append(("expr", Parser(lex(raw[i + 1:j])).parse_expr()))
+                i = j + 1
             else:
                 buf += c
                 i += 1
