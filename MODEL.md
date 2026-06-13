@@ -609,3 +609,35 @@ Five layers, each falling out of the one beneath:
 
 No `bool`, no `null`, no exceptions, no garbage collector, no borrow checker, and — save
 `module`/`import` — no keywords. Goal-directed evaluation given a body.
+
+---
+
+## Appendix — details pinned by the flagship
+
+The HTTP-server flagship (`examples/http-server.grid`) forced these specifics. Each
+*refines* a layer; none of them changes it.
+
+- **Interpolation (L4).** A backtick string interpolates `{expr}`: `` `hello, {name}!` `` —
+  carried from the original docs.
+- **`#` / `@` step value (L2).** What a per-step block receives: a list yields
+  `(index, element)`, a map `(key, value)`, a string `(index, char)`, a stream the
+  emitted value — destructured in the arm, e.g. `# { (i, x) => … }`.
+- **Destructuring patterns in `=>` (L3).** A pattern may be structural — a tuple
+  `(a, b)`, a list `[a, b]`, a list with a rest `[first, ...]` — applied recursively:
+  each position is a literal (match via `==`), a name (bind), or `_`, and the whole
+  matches only if every position does.
+- **`!` is the failure operator (L5).** It owns a `-> T ! E` function's error channel:
+  `e!` *raises* (exit with `e` as the failure); `f()!` *forwards* (exit with `f`'s error
+  if it failed, else unwrap the success `T`). Raise and propagate are one operator.
+- **Unconsumed fallibles are allowed (L5).** A `T ! E` or `T | ()` result may simply be
+  ignored — it is a value like any other (`handle(c, id)` does). No obligation to handle
+  it; a linter may warn later.
+- **Loop-continue is explicit (L2/L5).** An `@` body exits on a present value, so an
+  effectful body ends in `()` to keep looping. No sugar — the `()` keeps the
+  present-vs-nothing rule on the page.
+- **Inline `;` (syntax).** A newline ends an expression; `;` is the same separator on a
+  single line: `{ sys.print(e); 1 }`.
+- **Precedence (provisional).** A `{block}` binds to the `?` / `#` / `@` on its immediate
+  left as a tight unit; among the rest, tightest → loosest: `.` `[]` `()`, postfix `!`,
+  prefix `&` / `~`, `* / %`, `+ -`, bitwise, `..`, comparison, `&&`, `||`, bare infix `?`.
+  So `err ? {…} || 0` parses as `(err ? {…}) || 0`. The interpreter will fix this exactly.
