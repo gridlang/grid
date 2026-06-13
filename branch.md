@@ -155,8 +155,10 @@ expressions in the then/else slots — a bad trade.
 Note `cond ? xs : ys # f` parses as `cond ? xs : (ys # f)` ("if cond, xs; else fan-out ys"),
 asymmetric with `(cond ? xs : ys) # f` but fully predictable from the one rule.
 
-`=>` match arms are unaffected: `=>` is an arm **separator**, not an operator in the ladder;
-its RHS parses as a full expression, so `200 => x ? a : b` is `200 => (x ? a : b)`.
+`=>` is an ordinary operator (see `blocks.md`), sitting **just under `?:`**: its pattern
+binds on the left and its result extends right as a full expression, stopping at an
+enclosing `?:`'s `:`. So `200 => x ? a : b` is `200 => (x ? a : b)`, and in
+`f() ? x => g(x) : h()` the then-branch is `x => g(x)` while the `:` is the branch's else.
 
 ---
 
@@ -226,16 +228,18 @@ bound to `?:`, never a free infix — so `cond ? (x: 1) : (y: 2)` parses cleanly
 
 ---
 
-## 6. Interaction with dispatch (`dispatch.md` Option D)
+## 6. Interaction with match (see `blocks.md`)
 
-If a `?`-block contains `=>` arms it is a **dispatch**; with no `=>` it is a sequence. `?:`
-is orthogonal — a `:` after either kind of block introduces the else:
+Per `blocks.md`, a block is always one single-scope **sequence** — there is no "dispatch
+block" vs "sequence block." `=>` is an ordinary operator within it that commits the block on
+a pattern-match. `?:` composes cleanly on top: the condition supplies the topic, and any
+`=>` arms inside a branch match and commit against it. A `:` after the branch is the else:
 
 ```grid
-// sequence then-branch
+// then-branch with no => — a plain sequence
 n >= 0 ? { setup(); compute(n) } : { log("negative"); () }
 
-// dispatch then-branch
+// then-branch with => arms — each commits on match
 status ? {
   200 => "ok"
   404 => "missing"
@@ -256,8 +260,8 @@ status ? {
 ```
 
 That is a feature: topic-absence and topic-non-match are different events, and the syntax
-lets you handle each explicitly. (Effectful dispatch arms still need `dispatch.md` #1 —
-commit-on-match — to work; `?:` does not address that.)
+lets you handle each explicitly. (Effectful dispatch arms commit on match per `blocks.md`;
+`?:` does not address that.)
 
 ---
 

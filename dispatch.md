@@ -134,6 +134,11 @@ whose `cond ? x` body yields `()` to mean "keep looking". If a fix makes every m
 
 ### Option A — Dispatch on pattern-match, not value-presence
 
+> **Superseded by `blocks.md`.** The commit-on-match idea was kept, but its *pattern-kind
+> split* (literal commits / bind-wildcard falls through) proved unnecessary — `?:` absorbs
+> the guard-fall-through case, so every pattern commits uniformly. Kept here as the path to
+> that conclusion.
+
 A match arm commits when its **pattern matches**, regardless of whether its value is
 present. Mechanism: a non-matching arm returns a distinct `NoMatch` sentinel (not `()`);
 the evaluator returns the first **non-`NoMatch`** arm, whatever its value (including `()`).
@@ -190,7 +195,12 @@ Two narrow, pragmatic changes:
 - **Verdict:** viable and cheap, but **partial** — it addresses if/else and block scope
   without touching dispatch. Best seen as a *subset* of D, not a standalone answer.
 
-### Option D — Disambiguate the three uses of `{}` (recommended framing)
+### Option D — Disambiguate the three uses of `{}`
+
+> **Superseded by `blocks.md`.** This kept the two-kinded-block framing (a `{}` is a
+> *dispatch* if it has `=>`, else a *sequence*). `blocks.md` goes further: there is only
+> *one* kind of block (a sequence); `=>` is an ordinary operator that commits on match. So
+> the distinction this option draws no longer exists. Kept here as the path to that.
 
 Today a `?`/match `{ }` is overloaded across three jobs. Make the distinction **syntactic**:
 
@@ -239,38 +249,50 @@ distinction *at the dispatch site* without giving up the single-`()` value model
 
 ## Recommendation
 
-1. **Adopt Option D as the organizing rule:** in `?`/match position, a `{ }` with `=>`
-   arms is a **dispatch** (commit on pattern-match), a `{ }` without `=>` is a **sequence**
-   (run all, yield last). This single, visible rule fixes the scoping bug (#3) and sets up
-   the dispatch fix.
-2. **With Option A's commit semantics for dispatch:** a matched arm wins regardless of its
-   value; preserve find/guard by letting **bind/wildcard** arms keep present-wins /
-   fall-through (and guarded arms fall through on guard-false). This fixes the effectful
-   tokenizer/router (#1) while keeping R1–R5.
-3. **Add a dedicated `?` if/else** so `||` is never used as "else" — fixes effectful if/else
-   (#2). Leave `||` as the pure present-selector it is.
-4. **Reject Option B**, but credit it: it correctly names the overload, which is *why* the
-   fix belongs at the dispatch site, not in the value system.
+**Resolved — see `blocks.md` and `branch.md`.** The converged design keeps the single-`()`
+keystone and decides selection by the pattern/match rather than by the chosen branch's value
+— but it does so *more simply* than Options A and D, **both of which are superseded**:
 
-Net: the single-`()` keystone stays intact; the only change is that **selection is decided
-by the pattern/test, not by whether the chosen branch happened to produce a value** — which
-is what every other language in the table already does.
+1. **One kind of block (supersedes Option D).** A block is always a single-scope
+   **sequence**; there is no "dispatch block" vs "sequence block." A matching `=>` arm
+   commits the block. This fixes the `?`-scoping bug (#3). [`blocks.md`]
+2. **Uniform commit-on-match (supersedes Option A's pattern-kind split).** *Every* pattern —
+   literal, tuple, bind, `_` — commits on match, even with a `()` result. No
+   literal-vs-bind carve-out is needed: find / guard / reduce are preserved by the **`@`
+   combinator** (present-exit / `()`-continue) and the **`?`-if-let topic**, not by match
+   fall-through. This fixes effectful dispatch (#1). [`blocks.md`]
+3. **`=>` is an ordinary operator** (usable outside `{}`), and the **topic is explicit**,
+   threading as the last present value. [`blocks.md`]
+4. **A dedicated `?:` if/else** (`cond ? then : else`, the loosest operator) fixes effectful
+   if-else (#2); `||` reverts to a pure value-selector. [`branch.md`]
+5. **Reject Option B**, but credit it: it correctly names the `()` overload, which is *why*
+   the fix belongs at the dispatch site (the match / topic), not in the value system.
+
+The one idiom Option A's split existed to protect — cross-arm guard fall-through — is instead
+expressed with `?:` in-arm, so the split is unnecessary.
+
+Net: the single-`()` keystone stays intact; selection is decided by the pattern/match, not by
+whether the chosen branch produced a value — what every other language in the table does.
 
 ---
 
-## Open questions for discussion
+## Open questions
 
-- **Pattern-kind split vs. always-commit:** is "literal/structural commits, bind/wildcard
-  falls through" too subtle? Alternative: *all* matched arms commit, and the find/guard
-  idiom is rewritten (e.g. find becomes `(xs # { … })[0]`, guards become explicit). Which
-  is the smaller surprise?
-- **`@`-body interaction:** the `@` body stays a sequence whose present value = exit
-  (R5). Confirm the dispatch/sequence rule never reinterprets an `@` body — it shouldn't,
-  since the body isn't in `?`/match position, but it deserves an explicit line in the spec.
-- **If/else surface syntax:** `cond ? a : b`, or `cond ? {a} {b}`, or a worded form? The
-  `:` is currently used in maps/structs/types — does it collide?
-- **Guards as first-class:** ML-style guards (`pat => guard ? res`, fall through on
-  guard-false) are already the de-facto idiom — should the spec name them explicitly as the
-  one place a *matched* arm may still fall through?
-- **Exhaustiveness:** Rust/ML check that matches are total. Does Grid want a "no arm
-  matched → `()`" fallthrough (current), or eventually exhaustiveness warnings?
+Most are now resolved by `blocks.md` / `branch.md`:
+
+- **Pattern-kind split vs. always-commit** — *decided: always-commit.* Every pattern
+  commits on match; no literal-vs-bind split. find / guard / reduce survive via the `@`
+  combinator (present-exit / `()`-continue) and the `?`-if-let topic, not match
+  fall-through. [`blocks.md`]
+- **If/else surface syntax** — *decided: `cond ? then : else`* (`:` separator, no keyword;
+  no real collision since `:` is bound to `?:`). [`branch.md`]
+- **Guards as first-class** — *moot.* Cross-arm guard fall-through is retired; a guarded
+  result is written in-arm with `?:`. [`blocks.md` §3, `branch.md`]
+- **`@`-body interaction** — *resolved.* A block's value drives `@` (present = exit, `()` =
+  continue — R5); the `=>`-commit rule computes that value and never overrides the
+  combinator. [`blocks.md`]
+
+Still open:
+
+- **Exhaustiveness:** a match with no matching arm and no `_` currently yields `()`. Whether
+  to add Rust/ML-style exhaustiveness warnings is a later question. [`blocks.md` §8]
