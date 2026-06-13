@@ -217,7 +217,14 @@ class Parser:
         return self.parse_expr()
 
     def parse_consequent(self):
-        # the (non-block) right-hand side of `?` may be an in-place op
+        # the (non-block) right-hand side of `?` may be an emit, a defer, or an
+        # in-place op, as well as an ordinary expression
+        if self.at("SHIFT", ">>"):
+            self.eat("SHIFT", ">>"); self.nl()
+            return Emit(self.parse_consequent())
+        if self.at("PUNCT", "~"):
+            self.eat("PUNCT", "~"); self.nl()
+            return Defer(self.parse_consequent())
         if self.at("NAME") and self.peek().kind == "INPLACE":
             name = self.eat("NAME").val
             op = self.eat("INPLACE").val[0]
