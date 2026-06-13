@@ -11,6 +11,7 @@ TOKEN_SPEC = [
     ("FLOAT",    r"\d+\.\d+(?:[eE][+-]?\d+)?"),
     ("INT",      r"\d+"),
     ("STR",      r'"(?:[^"\\]|\\.)*"'),
+    ("ISTR",     r"`(?:[^`\\]|\\.)*`"),
     ("FATARROW", r"=>"),
     ("ARROW",    r"->"),
     ("EQOP",     r"==|!="),
@@ -68,7 +69,7 @@ def lex(src):
                 toks.append(Tok("NL", "\n", line))
             line += 1
             continue
-        if kind == "STR":
+        if kind == "STR" or kind == "ISTR":
             val = bytes(val[1:-1], "utf-8").decode("unicode_escape")
         toks.append(Tok(kind, val, line))
     if pos != len(src):

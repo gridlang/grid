@@ -40,9 +40,15 @@ class Block:     items: list
 @dataclass
 class Match:     pat: object; res: object
 @dataclass
-class Fn:        params: list; body: object             # params: list of names
+class Fn:        params: list; body: object; fallible: bool = False   # params: list of names
 @dataclass
 class Call:      fn: object; args: list
+@dataclass
+class Bang:      expr: object                           # postfix ! (raise / unwrap-or-propagate)
+@dataclass
+class Interp:    parts: list                            # list of ("lit", str) | ("expr", node)
+@dataclass
+class Destructure: names: list; value: object
 @dataclass
 class Member:    obj: object; key: object               # str field or int index
 @dataclass
@@ -125,6 +131,9 @@ class Parser:
         return items
 
     def parse_item(self):
+        d = self.try_destructure()
+        if d is not None:
+            return d
         if self.at("NAME"):
             nxt = self.peek()
             if nxt.kind == "INPLACE":
@@ -157,6 +166,24 @@ class Parser:
             self.nl()
             return Match(self.to_pattern(e), self.parse_arm_result())
         return e
+
+    def try_destructure(self):
+        # `a, b, ... = expr` (>= 2 names) -> Destructure
+        if not self.at("NAME"):
+            return None
+        names = [self.cur().val]
+        j = self.i + 1
+        while self.toks[j].kind == "PUNCT" and self.toks[j].val == ",":
+            j += 1
+            if self.toks[j].kind != "NAME":
+                return None
+            names.append(self.toks[j].val)
+            j += 1
+        if len(names) < 2 or not (self.toks[j].kind == "PUNCT" and self.toks[j].val == "="):
+            return None
+        self.i = j + 1
+        self.nl()
+        return Destructure(names, self.parse_expr())
 
     def parse_arm_result(self):
         # an arm's right-hand side may be an in-place op (e.g. `=> sum += n`)
@@ -253,6 +280,9 @@ class Parser:
                 idx = self.parse_expr(); self.nl()
                 self.eat("PUNCT", "]")
                 node = Index(node, idx)
+            elif self.at("PUNCT", "!"):
+                self.eat("PUNCT", "!")
+                node = Bang(node)
             else:
                 return node
 
@@ -269,9 +299,14 @@ class Parser:
 
     def parse_fn_rest(self, params_node):
         self.eat("ARROW"); self.nl()
-        self.parse_type()                           # return type, ignored at runtime
+        self.parse_type()                           # return type T, ignored at runtime
+        fallible = False
+        if self.at("PUNCT", "!"):                   # `-> T ! E`
+            self.eat("PUNCT", "!")
+            self.parse_type()                       # error type E, ignored at runtime
+            fallible = True
         body = self.parse_block()
-        return Fn(self.extract_params(params_node), body)
+        return Fn(self.extract_params(params_node), body, fallible)
 
     def extract_params(self, node):
         if isinstance(node, Unit):
@@ -292,6 +327,8 @@ class Parser:
             self.i += 1; return Lit(float(t.val))
         if t.kind == "STR":
             self.i += 1; return Lit(t.val)
+        if t.kind == "ISTR":
+            self.i += 1; return self.parse_interp(t.val)
         if t.kind == "NAME":
             self.i += 1; return Name(t.val)
         if self.at("PUNCT", "{"):
@@ -349,6 +386,26 @@ class Parser:
             items.append(self.parse_expr()); self.nl()
         self.eat("PUNCT", "]")
         return ListLit(items)
+
+    def parse_interp(self, raw):
+        parts = []
+        buf = ""
+        i = 0
+        while i < len(raw):
+            c = raw[i]
+            if c == "{":
+                end = raw.index("}", i)              # no nested braces in interpolation
+                if buf:
+                    parts.append(("lit", buf)); buf = ""
+                expr = Parser(lex(raw[i + 1:end])).parse_expr()
+                parts.append(("expr", expr))
+                i = end + 1
+            else:
+                buf += c
+                i += 1
+        if buf:
+            parts.append(("lit", buf))
+        return Interp(parts)
 
     # pattern conversion -------------------------------------------------------
 

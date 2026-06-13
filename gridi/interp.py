@@ -8,7 +8,7 @@ out collecting present results; `@` threads — present body exits the loop, () 
 """
 from .parser import (
     parse, Lit, Unit, Name, Tuple, ListLit, StructLit, Bind, InPlace, Bin,
-    Try, Iter, Block, Match, Fn, Call, Member, Index,
+    Try, Iter, Block, Match, Fn, Call, Member, Index, Bang, Interp, Destructure,
     LitPat, UnitPat, BindPat, WildPat, TuplePat,
 )
 
@@ -63,11 +63,34 @@ class Env:
 
 
 class Func:
-    __slots__ = ("params", "body", "root")
-    def __init__(self, params, body, root):
+    __slots__ = ("params", "body", "root", "fallible")
+    def __init__(self, params, body, root, fallible=False):
         self.params = params
         self.body = body
         self.root = root
+        self.fallible = fallible
+
+
+class Fallible:
+    """The result of a `-> T ! E` call: exactly one of ok / err is present."""
+    __slots__ = ("ok", "err")
+    def __init__(self, ok, err):
+        self.ok = ok
+        self.err = err
+
+
+class Propagate(Exception):
+    """Carries a failure raised by `!` up to the enclosing fallible function."""
+    def __init__(self, err):
+        self.err = err
+
+
+def as_pair(v):
+    if isinstance(v, Fallible):
+        return (v.ok, v.err)
+    if isinstance(v, (tuple, list)):
+        return tuple(v)
+    raise RuntimeError(f"cannot destructure {v!r}")
 
 
 def grid_eq(a, b):
@@ -106,9 +129,22 @@ def eval_node(node, env, topic):
         env.assign(node.name, _arith(node.op, cur, rhs))
         return UNIT
     if t is Fn:
-        return Func(node.params, node.body, env.root())
+        return Func(node.params, node.body, env.root(), node.fallible)
     if t is Call:
         return eval_call(node, env, topic)
+    if t is Bang:
+        return eval_bang(eval_node(node.expr, env, topic))
+    if t is Interp:
+        return "".join(
+            part if kind == "lit" else grid_str(eval_node(part, env, topic))
+            for kind, part in node.parts
+        )
+    if t is Destructure:
+        parts = as_pair(eval_node(node.value, env, topic))
+        for name, val in zip(node.names, parts):
+            if name != "_":
+                env.define(name, val)
+        return UNIT
     if t is Member:
         return eval_member(eval_node(node.obj, env, topic), node.key)
     if t is Index:
@@ -142,10 +178,25 @@ def eval_call(node, env, topic):
         call_env = Env(f.root)
         for name, val in zip(f.params, args):
             call_env.define(name, val)
+        if f.fallible:
+            try:
+                return Fallible(eval_scope_block(f.body, call_env, UNIT), UNIT)
+            except Propagate as p:
+                return Fallible(UNIT, p.err)
         return eval_scope_block(f.body, call_env, UNIT)
     if callable(f):                                    # builtin
         return f(*args)
     raise RuntimeError(f"not callable: {f!r}")
+
+
+def eval_bang(v):
+    # ! on a fallible result unwraps the success or propagates the error;
+    # ! on a plain value raises it (the `"msg"!` failure form).
+    if isinstance(v, Fallible):
+        if v.err is not UNIT:
+            raise Propagate(v.err)
+        return v.ok
+    raise Propagate(v)
 
 
 def eval_member(obj, key):
@@ -310,8 +361,13 @@ def grid_str(v):
         return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
     if isinstance(v, Func):
         return "<fn>"
+    if isinstance(v, Fallible):
+        return grid_str(v.ok) if v.err is UNIT else f"!{grid_str(v.err)}"
     return str(v)
 
 
 def run(src):
-    return eval_scope_block(parse(src), Env(), UNIT)
+    try:
+        return eval_scope_block(parse(src), Env(), UNIT)
+    except Propagate as p:
+        raise RuntimeError(f"unhandled failure: {grid_str(p.err)}")
