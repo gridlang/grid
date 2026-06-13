@@ -98,6 +98,17 @@ range   = expr ".." expr ;                          (* inclusive *)
 A `{ … }` is *only ever* a [block](../holes.md) — never a map or a struct — which is why the
 bracket families above are unambiguous.
 
+## Patterns
+
+The left of `=>` is a **pattern** — syntactically a restricted literal, matched against the
+block's topic ([Patterns](patterns.md) gives the matching rules):
+
+```ebnf
+pattern = literal | NAME | "_" | "(" ")"             (* literal · bind · wildcard · unit *)
+        | "(" pattern { "," pattern } ")"            (* tuple — also matches a struct by position *)
+        | "[" pattern { "," pattern } [ "," "..." ] "]" ;   (* list, optional trailing rest *)
+```
+
 ## Blocks and combinators
 
 A `{block}` binds to the `#` / `@` combinator on its immediate left as a tight unit, and a
