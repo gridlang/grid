@@ -29,6 +29,12 @@ i: &int = 0          // mutable — the attached handle
                           // afterward i is 4 — the move brought it back
 ```
 
+A read-hole is a **view**, not a second handle — so a block may *read* an outer value, even
+a `&` mutable, without breaking single-ownership: a view cannot write, and while a
+[sited](#sited-vs-detached) block holds one the owner runs nothing, so a read and a write
+never overlap. Only *writing* takes the move. (This is why a `#` body may read an enclosing
+`&` and still never alias it for writing.)
+
 ## Sited vs detached
 
 A `?` / `#` / `@` body or a bare block is **sited**: it sits lexically inside an enclosing

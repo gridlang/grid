@@ -48,7 +48,9 @@ f() ? x => g(x) : h() →  then = (x => g(x)), else = h()
 - **Selectors** `&& ||` choose a value and short-circuit: `a && b` is `b` if `a` is present
   else `()`; `a || b` is the first present operand. `||` is a value-default, **never** an
   else — that is [`?:`](../try-branch.md#a-pure-value-selector). Note `a || b ≡ a ? a : b`.
-- **Bitwise** `& | ^ << >>` operate on integers.
+- **Bitwise** `& | ^ << >>` operate on integers. They bind **tighter than comparison**
+  (between `+ -` and `..`) — deliberately unlike C, so `a & mask == 0` parses as
+  `(a & mask) == 0`, not C's `a & (mask == 0)` trap.
 
 ## Control operators
 

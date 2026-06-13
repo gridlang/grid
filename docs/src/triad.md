@@ -62,7 +62,10 @@ Each block is its own scope. By [the capture rule](holes.md#one-rule-for-capture
 *read* (share) the surrounding scope but cannot *write* it — a write is a move, and one
 handle cannot move into every parallel block — so the blocks are independent and **`#` runs
 them in parallel, safely, with no annotation.** A `#` whose arms also `#` builds nested
-results (a table); see the [tour](examples/tour.md).
+results (a table); see the [tour](examples/tour.md). `#` needs a *materialized* source — a
+list, map, tuple, or a [drained stream](growth.md#sources); a literal-block generator is
+[`@`-only](#why-the-three-are-one-family), since fan-out cannot re-evaluate a source in
+sequence.
 
 ## Thread
 

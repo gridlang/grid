@@ -69,6 +69,10 @@ Type forms: `(A, B)` a tuple, `(name: T)` a struct. In a *type* position the rig
 is a type; in a *value* position it is a value — which is how `(x: foo)` stays knowable even
 though any label can name a type (below).
 
+A label that names a struct type is callable as a **constructor**: `Point(x: 1, y: 2)`
+builds a `Point`, and any field left out takes its type's default. Construction by name and
+the bare struct literal `(x: 1, y: 2)` produce the same value.
+
 ## Unions and intersection
 
 `|` carries **union** — a value of either type:
@@ -89,7 +93,8 @@ Employee = Person & (id: int)     // has name, age, AND id
 (the attached handle); an **infix** `A & B` on types is intersection (and on `int`s it is
 bitwise-and — separated by value-vs-type position). A union defaults to `()` when `()` is a
 member, and otherwise to the default of its first member — so `T | ()` defaults to `()`,
-which is exactly "absent."
+which is exactly "absent." (Composite defaults follow from the parts: `[]` for a list,
+`[:]` for a map, and each field at its own default for a tuple or struct.)
 
 ## Labels as types, structural fit
 

@@ -17,6 +17,10 @@ never patterns.
 | list — `[p, q]` | a list of that **exact** length, each `pᵢ` matching | each position |
 | list + rest — `[p, ...]` | a list of *at least* that length | the leads; `...` discards the tail |
 
+A **struct** is a [named tuple](../types.md#tuples-and-structs--both--), so a positional
+tuple pattern matches it by position — `(x: 1, y: 2) ? { (a, b) => … }` binds `a = 1`,
+`b = 2`.
+
 Sub-patterns nest to any depth — each position is itself one of the forms above:
 
 ```grid

@@ -67,8 +67,9 @@ serve = (c: Conn) -> () ! Err {
 ## Fallibles
 
 A no-information failure is already `-> T | ()` ([Layer 3](present.md)). When a failure must
-carry a *reason*, `-> T ! E` is the shorthand: success is a `T`, failure carries an `E`,
-with the error slot being an `E | ()` (present means failed). The postfix `!` consumes it:
+carry a *reason*, `-> T ! E` is the shorthand. Concretely a fallible result is a **pair** —
+a value `T | ()` and an error `E | ()`: on success the value is present and the error is
+`()`; on failure the reverse. The postfix `!` consumes that pair:
 
 ```grid
 read = (path: str)  -> str    ! Err { … }
