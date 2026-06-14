@@ -307,3 +307,24 @@ def test_arm_patterns(body, val, tmp_path):
 ])
 def test_function_values(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # { cond } @ { body } — the while-loop form every gridc.grid loop uses
+    ('i: &int := 0\n  s: &int := 0\n  { i < 5 } @ { s += i\n    i += 1 }\n  s', 10),
+    # while with a && condition
+    ('i: &int := 1\n  p: &int := 1\n  { i <= 4 && i > 0 } @ { p *= i\n    i += 1 }\n  p', 24),
+    # scan a string by index, count a char (one-armed ? in the body)
+    ('s := "hello"\n  n := s.len\n  i: &int := 0\n  cnt: &int := 0\n'
+     '  { i < n } @ {\n    s[i] == "l" ? { cnt += 1 }\n    i += 1 }\n  cnt', 2),
+    # nested while loops
+    ('total: &int := 0\n  i: &int := 0\n  { i < 3 } @ {\n    j: &int := 0\n'
+     '    { j < 3 } @ { total += 1\n      j += 1 }\n    i += 1 }\n  total', 9),
+    # a body with a `let` (re-bound each iteration) building a string
+    ('s := "abcde"\n  n := s.len\n  i: &int := 0\n  acc: &str := ""\n'
+     '  { i < n } @ {\n    c := s[i]\n    acc = acc + c\n    i += 1 }\n  acc.len', 5),
+])
+def test_while_loops(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

@@ -267,7 +267,7 @@ parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
     s, p := parse_stmt(toks, cur + 2)                   // skip ) and =>
     (("armtup", names, s), p + 1)
   } :
-  { node, p := parse_expr(toks, pos + 1); (node, p + 1) }
+  { node, p := parse_expr(toks, pos); (node, p) }       // a { block } or ( expr ) body
 }
 
 // cond ? then : else  ->  ("if", cond, then, else)   (loosest, right-assoc)
@@ -799,6 +799,20 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   node.0 == "iter" ? {                                 // src @|# (name => body)
     src := node.2
     arm := node.3
+    src.0 == "block" ? {                               // { cond } @ { body } — while loop
+      // the condition is the block's final expression, re-checked each iteration
+      // as a real condition (so int relations test their icmp, not a value).
+      cstmts := src.1
+      condexpr := cstmts[cstmts.len - 1].1
+      cir, ctag, c1 := gen_cond(condexpr, env, c)
+      L := `{c1}`
+      bir, bv, bf, bt, c2 := gen_expr(arm, env, c1)
+      ("  br label %wc" + L + "\n" +
+       "wc" + L + ":\n" + cir +
+       "  br i1 " + ctag + ", label %wb" + L + ", label %we" + L + "\n" +
+       "wb" + L + ":\n" + bir + "  br label %wc" + L + "\n" +
+       "we" + L + ":\n", "0", "false", "i64", c2)
+    } :
     src.0 == "range" && arm.0 == "arm" ? {
       // a `..` range counts the element from lo to hi inclusive; the arm's
       // bound name IS the counter slot, so the body reads it like any local.
