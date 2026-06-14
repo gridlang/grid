@@ -5,7 +5,7 @@
 """
 import sys
 
-from .interp import Session, grid_str, UNIT
+from .interp import Session, grid_str, UNIT, Func, apply_func, Propagate
 
 
 BANNER = "Grid · gridi REPL — Ctrl-D to exit, blank line to force-evaluate"
@@ -105,16 +105,24 @@ def repl():
             print(grid_str(value))
 
 
-def run_file(path):
+def run_file(path, args=None):
     try:
         src = open(path).read()
     except OSError as e:
         print(f"gridi: {e}", file=sys.stderr)
         return 1
+    session = Session()
     try:
-        value = Session().eval(src)
+        value = session.eval(src)
+        main_fn = session.env.vars.get("main")
+        if isinstance(main_fn, Func):                  # CLI entry: main(args) -> exit code
+            result = apply_func(main_fn, [list(args or [])])
+            return result if isinstance(result, int) else 0
     except SyntaxError as e:
         print(f"parse error: {e}", file=sys.stderr)
+        return 1
+    except Propagate as p:
+        print(f"unhandled failure: {grid_str(p.err)}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
@@ -126,7 +134,7 @@ def run_file(path):
 
 def main(argv):
     if len(argv) > 1:
-        return run_file(argv[1])
+        return run_file(argv[1], argv[2:])
     repl()
     return 0
 

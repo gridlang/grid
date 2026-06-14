@@ -130,6 +130,20 @@ def _net_unavailable(*_a):
     raise RuntimeError("net.* needs real I/O; not available in the validator")
 
 
+def _fs_read(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return UNIT
+
+
+def _fs_write(path, content):
+    with open(path, "w") as f:
+        f.write(content if isinstance(content, str) else grid_str(content))
+    return UNIT
+
+
 def _make_stdlib():
     return {
         "str": {
@@ -157,6 +171,8 @@ def _make_stdlib():
         # (the volatile/effect semantics aren't observable in a tree-walker validator).
         "mmio": {n: (lambda addr: 0) for n in
                  ("u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64")},
+        # fs.* : host file I/O so a Grid program can be a CLI compiler
+        "fs": {"read": _fs_read, "write": _fs_write},
     }
 
 
