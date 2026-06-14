@@ -40,7 +40,7 @@ def compile_exit(program, tmp):
     c = subprocess.run([PY, "-m", "gridi", GRIDC, str(src), str(ll)],
                        cwd=REPO, capture_output=True, text=True)
     assert c.returncode == 0, f"gridc failed: {c.stderr}"
-    k = subprocess.run(["clang", str(ll), "-o", str(binp)], capture_output=True, text=True)
+    k = subprocess.run(["clang", "-nostdlib", str(ll), "-o", str(binp)], capture_output=True, text=True)
     assert k.returncode == 0, f"clang failed: {k.stderr}\n--- IR ---\n{ll.read_text()}"
     return subprocess.run([str(binp)]).returncode
 

@@ -195,8 +195,15 @@ parse_postfix := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   cur: &int := p
   { tkind(toks, cur) == "." || tkind(toks, cur) == "[" } @ {
     tkind(toks, cur) == "." ? {
-      acc = ("member", acc, ttext(toks, cur + 1))
-      cur = cur + 2
+      tkind(toks, cur + 2) == "(" ? {                  // obj.method(args) -> qualified call
+        args, p2 := parse_args(toks, cur + 3)
+        acc = ("call", acc.1 + "." + ttext(toks, cur + 1), args)
+        cur = p2
+      } :
+      {
+        acc = ("member", acc, ttext(toks, cur + 1))
+        cur = cur + 2
+      }
     } :
     {
       idx, p2 := parse_expr(toks, cur + 1)
@@ -776,6 +783,15 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
        elt, "true", et, c2 + 3)
     }
   } :
+  node.0 == "call" && node.1 == "fs.read" ? {           // host: read a whole file -> str
+    air, ops, c2 := gen_args(node.2, env, c)
+    reg := `%t{c2}`
+    (air + "  " + reg + " = call {i64, ptr} @__read(" + ops + ")\n", reg, "true", "str", c2 + 1)
+  } :
+  node.0 == "call" && node.1 == "fs.write" ? {          // host: write a str to a file -> ()
+    air, ops, c2 := gen_args(node.2, env, c)
+    (air + "  call void @__write(" + ops + ")\n", "0", "false", "i64", c2)
+  } :
   node.0 == "call" ? {
     cir, callee, cf, ct, c1 := gen_expr(("name", node.1), env, c)  // @name or a loaded fn ptr
     air, ops, c2 := gen_args(node.2, env, c1)
@@ -1214,7 +1230,75 @@ preamble := () -> str {
   "  call void @llvm.memcpy.p0.p0.i64(ptr %dst, ptr %ep, i64 %esz, i1 false)\n" +
   "  %nl = add i64 %len, 1\n" +
   "  %o0 = insertvalue {i64, i64, ptr} undef, i64 %nl, 0\n  %o1 = insertvalue {i64, i64, ptr} %o0, i64 %fc, 1\n" +
-  "  %o2 = insertvalue {i64, i64, ptr} %o1, ptr %fp, 2\n  ret {i64, i64, ptr} %o2\n}\n"
+  "  %o2 = insertvalue {i64, i64, ptr} %o1, ptr %fp, 2\n  ret {i64, i64, ptr} %o2\n}\n" +
+  // ── the OS boundary: raw aarch64 Linux syscalls, no libc ──
+  "define i64 @__sys(i64 %nr, i64 %a0, i64 %a1, i64 %a2, i64 %a3, i64 %a4, i64 %a5) {\n" +
+  "  %r = call i64 asm sideeffect \"svc #0\", " +
+    "\"={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}\"" +
+    "(i64 %nr, i64 %a0, i64 %a1, i64 %a2, i64 %a3, i64 %a4, i64 %a5)\n  ret i64 %r\n}\n" +
+  // llvm.memcpy lowers to a memcpy call; with -nostdlib we provide it ourselves.
+  "define ptr @memcpy(ptr %d, ptr %s, i64 %n) {\n" +
+  "entry:\n  %ip = alloca i64\n  store i64 0, ptr %ip\n  br label %ml\n" +
+  "ml:\n  %i = load i64, ptr %ip\n  %dn = icmp sge i64 %i, %n\n  br i1 %dn, label %me, label %mb\n" +
+  "mb:\n  %sp = getelementptr i8, ptr %s, i64 %i\n  %b = load i8, ptr %sp\n" +
+  "  %dp = getelementptr i8, ptr %d, i64 %i\n  store i8 %b, ptr %dp\n" +
+  "  %i2 = add i64 %i, 1\n  store i64 %i2, ptr %ip\n  br label %ml\n" +
+  "me:\n  ret ptr %d\n}\n" +
+  "define i64 @strlen(ptr %s) {\n" +
+  "entry:\n  %ip = alloca i64\n  store i64 0, ptr %ip\n  br label %sl\n" +
+  "sl:\n  %i = load i64, ptr %ip\n  %p = getelementptr i8, ptr %s, i64 %i\n  %c = load i8, ptr %p\n" +
+  "  %z = icmp eq i8 %c, 0\n  br i1 %z, label %se, label %sb\n" +
+  "sb:\n  %i2 = add i64 %i, 1\n  store i64 %i2, ptr %ip\n  br label %sl\n" +
+  "se:\n  %r = load i64, ptr %ip\n  ret i64 %r\n}\n" +
+  // fs.read: openat(AT_FDCWD, path, O_RDONLY) -> read loop into the arena -> close
+  "define {i64, ptr} @__read({i64, ptr} %path) {\n" +
+  "entry:\n  %pp = extractvalue {i64, ptr} %path, 1\n  %pi = ptrtoint ptr %pp to i64\n" +
+  "  %fd = call i64 @__sys(i64 56, i64 -100, i64 %pi, i64 0, i64 0, i64 0, i64 0)\n" +
+  "  %buf = call ptr @__alloc(i64 67108864)\n  %bi = ptrtoint ptr %buf to i64\n" +
+  "  %tp = alloca i64\n  store i64 0, ptr %tp\n  br label %rl\n" +
+  "rl:\n  %t = load i64, ptr %tp\n  %dst = add i64 %bi, %t\n  %room = sub i64 67108864, %t\n" +
+  "  %k = call i64 @__sys(i64 63, i64 %fd, i64 %dst, i64 %room, i64 0, i64 0, i64 0)\n" +
+  "  %le = icmp sle i64 %k, 0\n  br i1 %le, label %rd, label %ra\n" +
+  "ra:\n  %t2 = add i64 %t, %k\n  store i64 %t2, ptr %tp\n  br label %rl\n" +
+  "rd:\n  %total = load i64, ptr %tp\n" +
+  "  %cl = call i64 @__sys(i64 57, i64 %fd, i64 0, i64 0, i64 0, i64 0, i64 0)\n" +
+  "  %r0 = insertvalue {i64, ptr} undef, i64 %total, 0\n  %r1 = insertvalue {i64, ptr} %r0, ptr %buf, 1\n" +
+  "  ret {i64, ptr} %r1\n}\n" +
+  // fs.write: openat(AT_FDCWD, path, O_WRONLY|O_CREAT|O_TRUNC, 0644) -> write -> close
+  "define void @__write({i64, ptr} %path, {i64, ptr} %content) {\n" +
+  "entry:\n  %pp = extractvalue {i64, ptr} %path, 1\n  %pi = ptrtoint ptr %pp to i64\n" +
+  "  %fd = call i64 @__sys(i64 56, i64 -100, i64 %pi, i64 577, i64 420, i64 0, i64 0)\n" +
+  "  %cl = extractvalue {i64, ptr} %content, 0\n  %cp = extractvalue {i64, ptr} %content, 1\n" +
+  "  %ci = ptrtoint ptr %cp to i64\n" +
+  "  %w = call i64 @__sys(i64 64, i64 %fd, i64 %ci, i64 %cl, i64 0, i64 0, i64 0)\n" +
+  "  %c = call i64 @__sys(i64 57, i64 %fd, i64 0, i64 0, i64 0, i64 0, i64 0)\n  ret void\n}\n"
+}
+
+// the libc-free entry point. For main() -> call + exit_group; for
+// main(args: [str]) -> a naked _start grabs sp and hands argv to gridc_start,
+// which marshals argv[1..] into a [str] list (each str points at the original
+// NUL-terminated C string, so paths flow straight into openat) and calls main.
+start_stub := (np: int) -> str {
+  np == 0 ?
+    "define void @_start() {\n  %r = call i64 @main()\n" +
+    "  %e = call i64 @__sys(i64 94, i64 %r, i64 0, i64 0, i64 0, i64 0, i64 0)\n  unreachable\n}\n" :
+    "define void @_start() #nk {\n" +
+    "  call void asm sideeffect \"mov x0, sp\\0Abl gridc_start\", \"\"()\n  unreachable\n}\n" +
+    "attributes #nk = { naked noreturn }\n" +
+    "define void @gridc_start(ptr %sp) {\n" +
+    "entry:\n  %argc = load i64, ptr %sp\n  %n = sub i64 %argc, 1\n" +
+    "  %bytes = mul i64 %n, 16\n  %base = call ptr @__alloc(i64 %bytes)\n" +
+    "  %ip = alloca i64\n  store i64 0, ptr %ip\n  br label %gl\n" +
+    "gl:\n  %i = load i64, ptr %ip\n  %dn = icmp sge i64 %i, %n\n  br i1 %dn, label %ge, label %gb\n" +
+    "gb:\n  %ai = add i64 %i, 2\n  %off = mul i64 %ai, 8\n  %ap = getelementptr i8, ptr %sp, i64 %off\n" +
+    "  %cstr = load ptr, ptr %ap\n  %sl = call i64 @strlen(ptr %cstr)\n" +
+    "  %sv0 = insertvalue {i64, ptr} undef, i64 %sl, 0\n  %sv1 = insertvalue {i64, ptr} %sv0, ptr %cstr, 1\n" +
+    "  %slot = getelementptr {i64, ptr}, ptr %base, i64 %i\n  store {i64, ptr} %sv1, ptr %slot\n" +
+    "  %i2 = add i64 %i, 1\n  store i64 %i2, ptr %ip\n  br label %gl\n" +
+    "ge:\n  %l0 = insertvalue {i64, i64, ptr} undef, i64 %n, 0\n" +
+    "  %l1 = insertvalue {i64, i64, ptr} %l0, i64 %n, 1\n  %l2 = insertvalue {i64, i64, ptr} %l1, ptr %base, 2\n" +
+    "  %r = call i64 @main({i64, i64, ptr} %l2)\n" +
+    "  %e = call i64 @__sys(i64 94, i64 %r, i64 0, i64 0, i64 0, i64 0, i64 0)\n  unreachable\n}\n"
 }
 
 gen := (fns: [(str, str)]) -> str {
@@ -1222,7 +1306,9 @@ gen := (fns: [(str, str)]) -> str {
   fns @ (f => { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))]; () })
   out: &str := preamble()
   fns @ (f => { out = out + gen_fn(f, ftab); () })
-  out
+  np: &int := 0
+  fns @ (f => { f.1 == "main" ? { ps := f.2; np = ps.len } : (); () })
+  out + start_stub(np)
 }
 
 main := (args: [str]) -> int {
