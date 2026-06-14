@@ -344,3 +344,19 @@ def test_while_loops(body, val, tmp_path):
 def test_backtick_interpolation(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # grow a list well past the initial capacity (0->4->8->16->32) via += push
+    ('xs: &[int] := []\n  1..20 @ (n => xs += [n])\n  s: &int := 0\n  xs @ (x => s += x)\n  s', 210),
+    # the store form xs = xs + [e] (in a block arm) amortizes the same way
+    ('xs: &[int] := []\n  1..20 @ (n => { xs = xs + [n] })\n  xs.len + xs[19]', 40),
+    # a list of strings grown by push, then measured
+    ('xs: &[str] := []\n  1..6 @ (n => xs += ["ab"])\n  s: &int := 0\n  xs @ (w => s += w.len)\n  s', 12),
+    # capacity grows past len: push 10, read len and a middle element (5*5=25)
+    ('xs: &[int] := []\n  1..10 @ (n => xs += [n * n])\n  xs.len * 10 + xs[4]', 125),
+])
+def test_amortized_append(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
