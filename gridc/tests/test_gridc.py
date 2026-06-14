@@ -245,3 +245,27 @@ def test_string_compare_and_index(body, val, tmp_path):
 def test_lists(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # a predicate typed -> str whose body is a relation chain: it yields the
+    # matched char (present) or () — valid IR — and reads as a condition
+    ('dig := (c: str) -> str { c >= "0" && c <= "9" }\nmain := () -> int { dig("7") ? 1 : 0 }', 1),
+    ('dig := (c: str) -> str { c >= "0" && c <= "9" }\nmain := () -> int { dig("z") ? 1 : 0 }', 0),
+    ('nl := (c: str) -> str { c == "a" || c == "b" }\nmain := () -> int { nl("b") ? 5 : 0 }', 5),
+    ('nl := (c: str) -> str { c == "a" || c == "b" }\nmain := () -> int { nl("z") ? 5 : 0 }', 0),
+    # { block } arms in a ?: (single statement, taken / not taken)
+    ('main := () -> int {\n  x: &int := 0\n  5 > 3 ? { x = 7 } : { x = 9 }\n  x\n}', 7),
+    # { block } with multiple statements
+    ('main := () -> int {\n  x: &int := 0\n  3 > 5 ? { x = 1 } : { x = 2\n    x += 10 }\n  x\n}', 12),
+    # a { block } arm that yields a value
+    ('main := () -> int {\n  y := 5 > 3 ? { 40 + 2 } : { 0 }\n  y\n}', 42),
+    # inline predicate dispatch into block arms
+    ('main := () -> int {\n  c := "5"\n  v: &int := 0\n  c >= "0" && c <= "9" ? { v = 1 } : { v = 2 }\n  v\n}', 1),
+    # the lexer shape: a nested ?: ladder with { block } arms and predicates
+    ('cls := (c: str) -> int {\n  c >= "0" && c <= "9" ? { 1 } : c == " " ? { 2 } : { 3 }\n}\n'
+     'main := () -> int { cls("5") * 100 + cls(" ") * 10 + cls("x") }', 123),
+])
+def test_present_relations_and_blocks(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

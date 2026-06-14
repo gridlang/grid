@@ -111,6 +111,10 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
     } :
     (("name", ttext(toks, pos)), pos + 1)
   } :
+  k == "{" ? {                                         // { stmts } block expression
+    stmts, p := parse_body(toks, pos + 1)
+    (("block", stmts), p + 1)
+  } :
   k == "[" ? {
     tkind(toks, pos + 1) == "]" ? (("list", []), pos + 2) :   // empty list
     {
@@ -450,8 +454,23 @@ elemtype := (t: str) -> str { t.1 }                  // ("lst", elem) -> elem
 // the zero / () value of a type, for store into a freshly-allocated slot.
 zerov := (t: str) -> str { t == "i64" ? "0" : "zeroinitializer" }
 
-// gen a condition -> (instructions, i1 tag, counter). A relation is an icmp;
-// any other (present) value is the constant `true`.
+// presence test of a value -> (instructions, i1 tag, counter). An i64 is present
+// when nonzero; a fat str/list when its pointer is non-null ( () is {0, null} ).
+gen_present := (v: str, vt: str, c: int) -> (str, str, int) {
+  vt == "i64" ? {
+    tag := `%t{c}`
+    ("  " + tag + " = icmp ne i64 " + v + ", 0\n", tag, c + 1)
+  } :
+  {
+    p := `%t{c}`
+    tag := `%t{c + 1}`
+    ("  " + p + " = extractvalue {i64, ptr} " + v + ", 1\n" +
+     "  " + tag + " = icmp ne ptr " + p + ", null\n", tag, c + 2)
+  }
+}
+
+// gen a condition -> (instructions, i1 tag, counter). A relation compares; a
+// && / || combines its operands' presence; any other value tests presence.
 gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
   node.0 == "rel" ? {
     la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
@@ -468,9 +487,16 @@ gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
        tag, c2 + 1)
     }
   } :
-  { e, v, vf, vt, c1 := gen_expr(node, env, c)         // any other value: truthy test
-    tag := `%t{c1}`
-    (e + "  " + tag + " = icmp ne i64 " + v + ", 0\n", tag, c1 + 1) }
+  node.0 == "bin" && boolop(node.1) ? {                // && / || over conditions
+    la, ta, c1 := gen_cond(node.2, env, c)
+    lb, tb, c2 := gen_cond(node.3, env, c1)
+    tag := `%t{c2}`
+    op := node.1 == "&&" ? "and" : "or"
+    (la + lb + "  " + tag + " = " + op + " i1 " + ta + ", " + tb + "\n", tag, c2 + 1)
+  } :
+  { e, v, vf, vt, c1 := gen_expr(node, env, c)         // any other value: present?
+    pir, tag, c2 := gen_present(v, vt, c1)
+    (e + pir, tag, c2) }
 }
 
 // gen each call argument, returning (instructions, "i64 a, i64 b", counter).
@@ -532,6 +558,7 @@ gen_find := (head: str, step: str, L: str, bop: str, bflag: str, bty: str, c: in
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
 gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
+  node.0 == "block" ? gen_block(node.1, env, c) :
   node.0 == "int"  ? ("", node.1, "true", "i64", c) :
   node.0 == "str"  ? {                                  // literal -> fat {len, ptr}
     txt := node.1
@@ -688,22 +715,25 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     (body + "  " + v + " = load " + rty + ", ptr " + vp + "\n" +
             "  " + f + " = load i1, ptr " + fp + "\n", v, f, tt, c3 + 2)
   } :
-  node.0 == "rel" ? {                                  // relation as a value -> 0/1
+  node.0 == "rel" ? {                                  // yields the right operand (present) or ()
     la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
     ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
+    rll := lltype(rt)
     lt == "str" ? {
       sc := `%t{c2}`
       cmp := `%t{c2 + 1}`
-      reg := `%t{c2 + 2}`
+      sel := `%t{c2 + 2}`
       (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
        "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + sc + ", 0\n" +
-       "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, "true", "i64", c2 + 3)
+       "  " + sel + " = select i1 " + cmp + ", " + rll + " " + rv + ", " + rll + " " + zerov(rt) + "\n",
+       sel, cmp, rt, c2 + 3)
     } :
     {
       cmp := `%t{c2}`
-      reg := `%t{c2 + 1}`
+      sel := `%t{c2 + 1}`
       (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
-       "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, "true", "i64", c2 + 2)
+       "  " + sel + " = select i1 " + cmp + ", " + rll + " " + rv + ", " + rll + " " + zerov(rt) + "\n",
+       sel, cmp, rt, c2 + 2)
     }
   } :
   node.0 == "iter" ? {                                 // src @|# (name => body)
@@ -815,6 +845,15 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "  %t" + `{c2 + 14}` + " = insertvalue {i64, ptr} %t" + `{c2 + 13}` + ", ptr %t" + `{c2 + 7}` + ", 1\n"
       (instr, "%t" + `{c2 + 14}`, "true", lt, c2 + 15)
     } :
+    boolop(node.1) ? {                                  // && present-guard / || present-select
+      pir, ptag, c3 := gen_present(lv, lt, c2)
+      sel := `%t{c3}`
+      node.1 == "&&" ?
+        (la + ra + pir + "  " + sel + " = select i1 " + ptag + ", " + lltype(rt) + " " + rv +
+           ", " + lltype(rt) + " " + zerov(rt) + "\n", sel, "true", rt, c3 + 1) :
+        (la + ra + pir + "  " + sel + " = select i1 " + ptag + ", " + lltype(lt) + " " + lv +
+           ", " + lltype(lt) + " " + rv + "\n", sel, "true", lt, c3 + 1)
+    } :
     {
       reg := `%t{c2}`
       instr := la + ra + "  " + reg + " = " + llop(node.1) + " i64 " + lv + ", " + rv + "\n"
@@ -890,6 +929,25 @@ gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> st
     ()
   })
   ir + "  ret " + retll + " " + ret + "\n"
+}
+
+// a { block } in expression position: run its statements, yield the last value.
+gen_block := (stmts: [(str, str)], env: [(str, str)], c: int) -> (str, str, str, str, int) {
+  ir:  &str := ""
+  e:   &[(str, str)] := env
+  cc:  &int := c
+  val: &str := "0"
+  fl:  &str := "true"
+  ty:  &str := "i64"
+  stmts @ (s => {
+    si, e2, c2, op, of, ot := gen_stmt(s, e, cc)
+    ir = ir + si
+    e = e2
+    cc = c2
+    op != "" ? { val = op; fl = of; ty = ot } : ()
+    ()
+  })
+  (ir, val, fl, ty, cc)
 }
 
 // ("fn", name, params, rettype, stmts) -> a complete `define`. ftab seeds the
