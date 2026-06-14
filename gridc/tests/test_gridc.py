@@ -157,3 +157,22 @@ def test_string_literals_and_len(program, val, tmp_path):
 ])
 def test_string_concat(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # tuple construction + numeric field access
+    ('main := () -> int {\n  t := (3, 4)\n  t.0 * 10 + t.1\n}', 34),
+    ('main := () -> int {\n  t := (7, 9)\n  t.1 - t.0\n}', 2),
+    # multi-name destructure of a tuple literal
+    ('main := () -> int {\n  a, b := (5, 6)\n  a * b\n}', 30),
+    ('main := () -> int {\n  a, b, c := (1, 2, 3)\n  a + b * c\n}', 7),
+    # destructure from a tuple-valued local
+    ('main := () -> int {\n  t := (4, 9)\n  a, b := t\n  a + b\n}', 13),
+    # heterogeneous tuple: a str field and an int field, chained .0.len
+    ('main := () -> int {\n  t := ("hi", 5)\n  t.0.len + t.1\n}', 7),
+    # tuple fields feeding a mutable accumulator
+    ('main := () -> int {\n  t := (2, 3)\n  s: &int := 0\n  s += t.0\n  s += t.1\n  s\n}', 5),
+])
+def test_tuples_and_destructure(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

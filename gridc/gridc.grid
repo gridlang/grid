@@ -109,7 +109,21 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
     } :
     (("name", ttext(toks, pos)), pos + 1)
   } :
-  k == "(" ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
+  k == "(" ? {
+    first, p := parse_expr(toks, pos + 1)
+    tkind(toks, p) == "," ? {                          // (a, b, ...) tuple
+      elems: &[(str, str)] := [first]
+      cur: &int := p
+      { tkind(toks, cur) == "," } @ {
+        e, p2 := parse_expr(toks, cur + 1)
+        elems = elems + [e]
+        cur = p2
+        ()
+      }
+      (("tuple", elems), cur + 1)
+    } :
+    (first, p + 1)                                      // plain (expr)
+  } :
   (("int", "0"), pos + 1)
 }
 
@@ -227,6 +241,17 @@ skip_type := (toks: [(str, str)], pos: int) -> int {
 parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   k0 := tkind(toks, pos)
   k1 := tkind(toks, pos + 1)
+  k0 == "name" && k1 == "," ? {                        // a, b, ... := tuple-expr
+    names: &[str] := [ttext(toks, pos)]
+    cur: &int := pos + 1
+    { tkind(toks, cur) == "," } @ {
+      names = names + [ttext(toks, cur + 1)]
+      cur = cur + 2
+      ()
+    }
+    node, p := parse_expr(toks, cur + 1)               // cur is at :=
+    (("destruct", names, node), p)
+  } :
   k0 == "name" && k1 == ":=" ? {
     node, p := parse_expr(toks, pos + 2); (("let", ttext(toks, pos), node), p)
   } :
@@ -306,6 +331,33 @@ lookup_type := (env: [(str, str)], name: str) -> str { env @ ((n, s, t) => n == 
 // ASCII; proper \NN escaping of specials/controls comes with self-host.
 escape_ll := (s: str) -> str { s }
 
+// ── types ────────────────────────────────────────────────────────────
+// A type is either a scalar string ("i64" | "str") or a compound tuple:
+// ("tup", [fieldtypes]) for tuples, ("lst", elemtype) for lists. Both str
+// and list lower to the fat value {i64, ptr}; a tuple to a flat LLVM struct.
+fieldnum := (s: str) -> int {
+  s == "0" ? 0 : s == "1" ? 1 : s == "2" ? 2 : s == "3" ? 3 :
+  s == "4" ? 4 : s == "5" ? 5 : s == "6" ? 6 : 7
+}
+
+lltype := (t: str) -> str {
+  t == "i64" ? "i64" :
+  t == "str" ? "{i64, ptr}" :
+  t.0 == "lst" ? "{i64, ptr}" :
+  "{" + tup_ll(t.1) + "}"
+}
+
+tup_ll := (fields: [str]) -> str {
+  out: &str := ""
+  fields @ (i: f => { out = out + (i == 0 ? "" : ", ") + lltype(f); () })
+  out
+}
+
+tup_field := (t: str, i: int) -> str { t.1[i] }
+
+// the zero / () value of a type, for store into a freshly-allocated slot.
+zerov := (t: str) -> str { t == "i64" ? "0" : "zeroinitializer" }
+
 // gen a condition -> (instructions, i1 tag, counter). A relation is an icmp;
 // any other (present) value is the constant `true`.
 gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
@@ -334,6 +386,23 @@ gen_args := (args: [(str, str)], env: [(str, str)], c0: int) -> (str, str, int) 
   (ir, ops, c)
 }
 
+// gen a sequence of expressions -> (instructions, [operands], [types], counter).
+gen_elems := (elems: [(str, str)], env: [(str, str)], c0: int) -> (str, [str], [str], int) {
+  ir:  &str := ""
+  ops: &[str] := []
+  tys: &[str] := []
+  c:   &int := c0
+  elems @ (e => {
+    ei, eo, ef, et, c2 := gen_expr(e, env, c)
+    ir  = ir + ei
+    ops = ops + [eo]
+    tys = tys + [et]
+    c   = c2
+    ()
+  })
+  (ir, ops, tys, c)
+}
+
 // gen_expr -> (instructions, value-operand, i1 present-flag, type, next-counter).
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
@@ -355,14 +424,36 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   } :
   node.0 == "name" ? {
     reg := `%t{c}`
-    lookup_type(env, node.1) == "str" ?
-      ("  " + reg + " = load {i64, ptr}, ptr " + lookup(env, node.1) + "\n", reg, "true", "str", c + 1) :
-      ("  " + reg + " = load i64, ptr " + lookup(env, node.1) + "\n", reg, "true", "i64", c + 1)
+    ty := lookup_type(env, node.1)
+    ("  " + reg + " = load " + lltype(ty) + ", ptr " + lookup(env, node.1) + "\n", reg, "true", ty, c + 1)
   } :
-  node.0 == "member" && node.2 == "len" ? {             // str/list length field
+  node.0 == "tuple" ? {                                 // (a, b, ...) -> aggregate
+    eir, ops, tys, c1 := gen_elems(node.1, env, c)
+    tty := ("tup", tys)
+    llt := lltype(tty)
+    acc: &str := "undef"
+    body: &str := eir
+    cc:  &int := c1
+    ops @ (i: op => {
+      reg := `%t{cc}`
+      body = body + "  " + reg + " = insertvalue " + llt + " " + acc + ", " +
+        lltype(tys[i]) + " " + op + ", " + `{i}` + "\n"
+      acc = reg
+      cc = cc + 1
+      ()
+    })
+    (body, acc, "true", tty, cc)
+  } :
+  node.0 == "member" ? {
     oir, ov, of, ot, c1 := gen_expr(node.1, env, c)
     reg := `%t{c1}`
-    (oir + "  " + reg + " = extractvalue {i64, ptr} " + ov + ", 0\n", reg, "true", "i64", c1 + 1)
+    node.2 == "len" ?                                   // str/list length field 0
+      (oir + "  " + reg + " = extractvalue {i64, ptr} " + ov + ", 0\n", reg, "true", "i64", c1 + 1) :
+      {                                                 // numeric tuple field .N
+        fty := tup_field(ot, fieldnum(node.2))
+        (oir + "  " + reg + " = extractvalue " + lltype(ot) + " " + ov + ", " + node.2 + "\n",
+         reg, "true", fty, c1 + 1)
+      }
   } :
   node.0 == "call" ? {
     air, ops, c2 := gen_args(node.2, env, c)
@@ -374,7 +465,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     res := `%r{c1}`
     tir, tv, tf, tt, c3 := gen_expr(node.2, env, c1 + 1)
     eir, ev, ef, et, c4 := gen_expr(node.3, env, c3)
-    rty := tt == "str" ? "{i64, ptr}" : "i64"
+    rty := lltype(tt)
     L := `{c4}`                                       // shared label suffix
     body := cir + "  " + res + " = alloca " + rty + "\n" +
       "  br i1 " + tag + ", label %then" + L + ", label %else" + L + "\n" +
@@ -391,8 +482,8 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     vp := `%rp{c1}`
     fp := `%rf{c1}`
     tir, tv, tf, tt, c3 := gen_expr(node.2, env, c1 + 1)
-    rty  := tt == "str" ? "{i64, ptr}" : "i64"
-    zero := tt == "str" ? "{i64 0, ptr null}" : "0"
+    rty  := lltype(tt)
+    zero := zerov(tt)
     L := `{c3}`
     body := cir + "  " + vp + " = alloca " + rty + "\n  " + fp + " = alloca i1\n" +
       "  br i1 " + tag + ", label %some" + L + ", label %none" + L + "\n" +
@@ -500,21 +591,39 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
 gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str) {
   s.0 == "let" ? {
     i2, op, of, ot, c2 := gen_expr(s.2, env, c)
-    rty := ot == "str" ? "{i64, ptr}" : "i64"
+    rty := lltype(ot)
     slot := `%s{c2}`
     (i2 + "  " + slot + " = alloca " + rty + "\n  store " + rty + " " + op + ", ptr " + slot + "\n",
      env + [(s.1, slot, ot)], c2 + 1, "", "false")
   } :
+  s.0 == "destruct" ? {                                 // a, b, ... := tuple-expr
+    ri, ro, rf, rt, c2 := gen_expr(s.2, env, c)
+    ir: &str := ri
+    e2: &[(str, str)] := env
+    cc: &int := c2
+    s.1 @ (i: nm => {
+      fty := tup_field(rt, i)
+      fll := lltype(fty)
+      val  := `%t{cc}`
+      slot := `%s{cc + 1}`
+      ir = ir + "  " + val + " = extractvalue " + lltype(rt) + " " + ro + ", " + `{i}` + "\n" +
+        "  " + slot + " = alloca " + fll + "\n  store " + fll + " " + val + ", ptr " + slot + "\n"
+      e2 = e2 + [(nm, slot, fty)]
+      cc = cc + 2
+      ()
+    })
+    (ir, e2, cc, "", "false")
+  } :
   s.0 == "store" ? {
     i2, op, of, ot, c2 := gen_expr(s.2, env, c)
-    rty := lookup_type(env, s.1) == "str" ? "{i64, ptr}" : "i64"
+    rty := lltype(lookup_type(env, s.1))
     (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false")
   } :
   s.0 == "inplace" ? {
     // x op= e  is  x = x op e; reuse gen_expr's typed binary by rewriting it.
     expanded := ("bin", iop(s.2), ("name", s.1), s.3)
     i2, op, of, ot, c2 := gen_expr(expanded, env, c)
-    rty := lookup_type(env, s.1) == "str" ? "{i64, ptr}" : "i64"
+    rty := lltype(lookup_type(env, s.1))
     (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false")
   } :
   { i2, op, of, ot, c2 := gen_expr(s.1, env, c); (i2, env, c2, op, of) }
