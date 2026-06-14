@@ -318,13 +318,13 @@ def eval_body(body, env, value):
     if tb is Match:
         sub = Env(env)
         if match_pat(body.pat, value, sub):
-            return eval_node(body.res, sub, value)
+            return eval_body(body.res, sub, value)       # result is body position: run blocks
         return UNIT
     if tb is KeyedMatch:
         sub = Env(env)
         if (_key_stack and match_pat(body.key, _key_stack[-1], sub)
                 and match_pat(body.pat, value, sub)):
-            return eval_node(body.res, sub, value)
+            return eval_body(body.res, sub, value)
         return UNIT
     return eval_node(body, Env(env), value)
 
@@ -509,13 +509,13 @@ def eval_scope_block(block, env, topic):
         if ti is Match:
             sub = Env(env)
             if match_pat(item.pat, topic, sub):
-                return eval_node(item.res, sub, topic)
+                return eval_body(item.res, sub, topic)   # result is body position: run blocks
             val = UNIT
         elif ti is KeyedMatch:
             sub = Env(env)
             if (_key_stack and match_pat(item.key, _key_stack[-1], sub)
                     and match_pat(item.pat, topic, sub)):
-                return eval_node(item.res, sub, topic)
+                return eval_body(item.res, sub, topic)
             val = UNIT
         else:
             val = eval_node(item, env, topic)

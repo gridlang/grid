@@ -4,28 +4,24 @@
 //
 // Emits LLVM IR text; `clang out.ll -o bin` links a native binary.
 //
-// Rungs so far:
-//   C1  literal-int main
-//   C2  lexer        — whitespace/comments, int, name, operators
-//   C3  parser/AST   — integer arithmetic with precedence + parens
-//   C4  codegen      — LLVM IR for `main := () -> int { <arith> }`
+// Rungs: C1 literal · C2 lexer · C3 parser · C4 arithmetic codegen ·
+//        C5a immutable `:=` locals.
 //
 // Note: `?:` ladders put the `:` at the END of a line (a newline after `:`
 // continues; a newline after `}` would end the statement).
 module main
 
 import fs
-import str
 import sys
 
 // ── lexer ────────────────────────────────────────────────────────────
-// a token is (kind, text); operators are self-kinded, literals carry a tag.
+// token = (kind, text). operators are self-kinded; literals carry a tag;
+// statement breaks (newline / `;`) become ("nl", ...).
 
 digit := (c: str) -> str { c >= "0" && c <= "9" }
 alpha := (c: str) -> str { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" }
-space := (c: str) -> str { c == " " || c == "\t" || c == "\r" || c == "\n" }
+space := (c: str) -> str { c == " " || c == "\t" || c == "\r" }
 
-// scan a run of chars matching p, returning (text, end-index).
 scan := (src: str, start: int, n: int, p: (str) -> str) -> (str, int) {
   text: &str := ""
   j: &int := start
@@ -39,6 +35,7 @@ lex := (src: str) -> [(str, str)] {
   n := src.len
   { i < n } @ {
     c := src[i]
+    (c == "\n" || c == ";") ? { toks = toks + [("nl", "nl")]; i += 1 } :
     space(c) ? { i += 1 } :
     digit(c) ? { t, j := scan(src, i, n, digit); toks = toks + [("int", t)]; i = j } :
     alpha(c) ? { t, j := scan(src, i, n, alpha); toks = toks + [("name", t)]; i = j } :
@@ -54,9 +51,8 @@ lex := (src: str) -> [(str, str)] {
 }
 
 // ── parser ───────────────────────────────────────────────────────────
-// AST nodes are tuples tagged by their first element:
-//   ("int", "42")            integer literal
-//   ("bin", "+", lhs, rhs)   binary op
+// expr AST:  ("int", "42") · ("name", "x") · ("bin", "+", lhs, rhs)
+// stmt AST:  ("let", name, expr) · ("ret", expr)
 
 tkind := (toks: [(str, str)], pos: int) -> str { pos < toks.len ? toks[pos].0 : "eof" }
 ttext := (toks: [(str, str)], pos: int) -> str { toks[pos].1 }
@@ -66,8 +62,9 @@ addop := (k: str) -> str { k == "+" || k == "-" }
 
 parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   k := tkind(toks, pos)
-  k == "int" ? (("int", ttext(toks, pos)), pos + 1) :
-  k == "(" ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
+  k == "int"  ? (("int", ttext(toks, pos)), pos + 1) :
+  k == "name" ? (("name", ttext(toks, pos)), pos + 1) :
+  k == "("    ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
   (("int", "0"), pos + 1)
 }
 
@@ -101,40 +98,86 @@ parse_add := (toks: [(str, str)], pos: int) -> ((str, str), int) {
 
 parse_expr := (toks: [(str, str)], pos: int) -> ((str, str), int) { parse_add(toks, pos) }
 
-// the program is `main := () -> int { <expr> }`; find the `{` and parse the body.
-parse_program := (toks: [(str, str)]) -> (str, str) {
+skip_nl := (toks: [(str, str)], pos: int) -> int {
+  cur: &int := pos
+  { tkind(toks, cur) == "nl" } @ { cur += 1; () }
+  cur
+}
+
+parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  tkind(toks, pos) == "name" && tkind(toks, pos + 1) == ":=" ? {
+    name := ttext(toks, pos)
+    node, p := parse_expr(toks, pos + 2)
+    (("let", name, node), p)
+  } :
+  { node, p := parse_expr(toks, pos); (("ret", node), p) }
+}
+
+// parse main's body: the statements between { and }.
+parse_program := (toks: [(str, str)]) -> [(str, str)] {
   b: &int := 0
   { tkind(toks, b) != "{" && b < toks.len } @ { b += 1; () }
-  node, p := parse_expr(toks, b + 1)
-  node
+  stmts: &[(str, str)] := []
+  cur: &int := skip_nl(toks, b + 1)
+  { tkind(toks, cur) != "}" && tkind(toks, cur) != "eof" } @ {
+    s, p := parse_stmt(toks, cur)
+    stmts = stmts + [s]
+    cur = skip_nl(toks, p)
+    ()
+  }
+  stmts
 }
 
 // ── codegen ──────────────────────────────────────────────────────────
+// codegen env is an assoc list (name, operand); immutable `:=` locals are SSA
+// values, so a name simply maps to the operand its initializer produced.
 
 llop := (op: str) -> str {
   op == "+" ? "add" : op == "-" ? "sub" : op == "*" ? "mul" : op == "/" ? "sdiv" : "srem"
 }
 
-// gen_expr -> (instructions, operand, next-temp-counter)  (counter threaded; no
-// module-level mutable, so this stays self-host-portable).
-gen_expr := (node: (str, str), c: int) -> (str, str, int) {
-  node.0 == "int" ? ("", node.1, c) :
+lookup := (env: [(str, str)], name: str) -> str { env @ ((n, v) => n == name ? v) }
+
+// gen_expr -> (instructions, operand, next-temp-counter)
+gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
+  node.0 == "int"  ? ("", node.1, c) :
+  node.0 == "name" ? ("", lookup(env, node.1), c) :
   {
-    la, lv, c1 := gen_expr(node.2, c)
-    ra, rv, c2 := gen_expr(node.3, c1)
+    la, lv, c1 := gen_expr(node.2, env, c)
+    ra, rv, c2 := gen_expr(node.3, env, c1)
     reg := `%t{c2}`
     instr := la + ra + "  " + reg + " = " + llop(node.1) + " i64 " + lv + ", " + rv + "\n"
     (instr, reg, c2 + 1)
   }
 }
 
-gen := (ast: (str, str)) -> str {
-  ir, val, c := gen_expr(ast, 0)
+gen_body := (stmts: [(str, str)]) -> str {
+  ir:  &str := ""
+  env: &[(str, str)] := []
+  c:   &int := 0
+  ret: &str := "0"
+  stmts @ (s => {
+    s.0 == "let" ? {
+      i2, op, c2 := gen_expr(s.2, env, c)
+      ir = ir + i2
+      env = env + [(s.1, op)]
+      c = c2
+    } : {
+      i2, op, c2 := gen_expr(s.1, env, c)
+      ir = ir + i2
+      ret = op
+      c = c2
+    }
+    ()
+  })
+  ir + "  ret i64 " + ret + "\n"
+}
+
+gen := (stmts: [(str, str)]) -> str {
   "; gridc\n" +
   "define i64 @main() {\n" +
   "entry:\n" +
-  ir +
-  "  ret i64 " + val + "\n" +
+  gen_body(stmts) +
   "}\n"
 }
 

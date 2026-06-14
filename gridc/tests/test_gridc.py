@@ -54,3 +54,15 @@ def compile_exit(program, tmp):
 def test_arith_matches_interpreter(expr, val, tmp_path):
     program = f"main := () -> int {{ {expr} }}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    ("x := 40\n  y := 2\n  x + y", 42),
+    ("a := 6\n  b := 7\n  c := a * b\n  c", 42),
+    ("x := 100\n  x - 58", 42),
+    ("x := 5\n  y := x * x\n  y + 17", 42),
+])
+def test_locals_match_interpreter(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
