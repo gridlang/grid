@@ -124,3 +124,36 @@ def test_range_reduce_matches_interpreter(program, val, tmp_path):
 ])
 def test_present_unit_value_model(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # string literals are fat values {len, ptr}; .len reads the length field
+    ('main := () -> int { "hello".len }', 5),
+    ('main := () -> int { "".len }', 0),
+    # a string bound by := infers str type; .len works through the slot
+    ('main := () -> int {\n  s := "grid"\n  s.len\n}', 4),
+    # .len yields i64, so it composes with integer arithmetic
+    ('main := () -> int {\n  a := "foo"\n  b := "barbar"\n  a.len + b.len\n}', 9),
+    ('main := () -> int {\n  s := "abcdefg"\n  s.len - 2\n}', 5),
+])
+def test_string_literals_and_len(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # concat allocates in the arena and copies both halves; .len of the result
+    ('main := () -> int {\n  s := "ab" + "cde"\n  s.len\n}', 5),
+    ('main := () -> int { ("ab" + "cd").len }', 4),
+    # chained concat
+    ('main := () -> int {\n  s := "a" + "bc" + "def"\n  s.len\n}', 6),
+    # concat with an empty operand
+    ('main := () -> int {\n  s := "" + "grid"\n  s.len\n}', 4),
+    # mutable str accumulator via store (= s + ...), the way gridc builds output
+    ('main := () -> int {\n  s: &str := "ab"\n  s = s + "cd"\n  s.len\n}', 4),
+    # mutable str accumulator via += concat in a loop (1..4 is 4 iterations)
+    ('main := () -> int {\n  s: &str := ""\n  1..4 @ (n => s += "xy")\n  s.len\n}', 8),
+])
+def test_string_concat(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
