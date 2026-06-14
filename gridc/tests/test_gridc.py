@@ -176,3 +176,22 @@ def test_string_concat(program, val, tmp_path):
 ])
 def test_tuples_and_destructure(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # function returning a tuple, destructured at the call site
+    ('pair := () -> (int, int) { (8, 3) }\nmain := () -> int {\n  a, b := pair()\n  a - b\n}', 5),
+    # str parameter, .len through the typed param slot
+    ('slen := (s: str) -> int { s.len }\nmain := () -> int { slen("hello") }', 5),
+    # str param in, str out (concat), consumed by .len
+    ('greet := (s: str) -> str { "hi " + s }\nmain := () -> int { greet("bob").len }', 6),
+    # tuple parameter, field access
+    ('fst := (t: (int, int)) -> int { t.0 }\nmain := () -> int { fst((9, 2)) }', 9),
+    # function returns a tuple, bound and field-accessed
+    ('mk := (x: int) -> (int, int) { (x, x * 2) }\nmain := () -> int {\n  p := mk(7)\n  p.1 - p.0\n}', 7),
+    # two str params concatenated
+    ('cat := (a: str, b: str) -> str { a + b }\nmain := () -> int { cat("ab", "cde").len }', 5),
+])
+def test_typed_function_abi(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

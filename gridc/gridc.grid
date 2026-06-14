@@ -279,26 +279,76 @@ parse_body := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
   (stmts, cur)
 }
 
-parse_params := (toks: [(str, str)], pos: int) -> ([str], int) {
-  names: &[str] := []
-  cur: &int := pos
-  { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
-    tkind(toks, cur) == "name" ? { names = names + [ttext(toks, cur)] } : ()
-    { tkind(toks, cur) != "," && tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ { cur += 1; () }
-    cur = tkind(toks, cur) == "," ? cur + 1 : cur
-    ()
-  }
-  (names, cur + 1)
+// a type annotation -> a structured type (scalar string / ("tup",[..]) /
+// ("lst",elem) / ("fn",ret)). Storage capabilities (&/*) and fallible error
+// channels (! E) don't affect the value rep, so they're stripped here.
+parse_type := (toks: [(str, str)], pos: int) -> (str, int) {
+  k := tkind(toks, pos)
+  (k == "&" || k == "*") ? parse_type(toks, pos + 1) :
+  k == "[" ? {
+    el, p := parse_type(toks, pos + 1)                // [ elem ]
+    parse_type_suffix(toks, p + 1, ("lst", el))
+  } :
+  k == "(" ? {
+    tkind(toks, pos + 1) == ")" ? {                   // () or () -> R
+      tkind(toks, pos + 2) == "->" ? {
+        r, p := parse_type(toks, pos + 3); (("fn", r), p)
+      } :
+      ("i64", pos + 2)
+    } :
+    {
+      tys: &[str] := []
+      cur: &int := pos + 1
+      { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
+        t, p := parse_type(toks, cur)
+        tys = tys + [t]
+        cur = tkind(toks, p) == "," ? p + 1 : p
+        ()
+      }
+      after := cur + 1                                 // past )
+      tkind(toks, after) == "->" ? {                   // (params) -> R  function type
+        r, p := parse_type(toks, after + 1); (("fn", r), p)
+      } :
+      tys.len == 1 ? parse_type_suffix(toks, after, tys[0]) :
+      parse_type_suffix(toks, after, ("tup", tys))
+    }
+  } :
+  k == "name" ? {
+    base := ttext(toks, pos) == "str" ? "str" : "i64"  // int + all sized ints -> i64
+    parse_type_suffix(toks, pos + 1, base)
+  } :
+  ("i64", pos + 1)
 }
 
-// name := ( params ) -> type { stmts }
+// after a base type: an optional `! ErrType` fallible channel (error ignored).
+parse_type_suffix := (toks: [(str, str)], pos: int, base: str) -> (str, int) {
+  tkind(toks, pos) == "!" ? { e, p := parse_type(toks, pos + 1); (base, p) } :
+  (base, pos)
+}
+
+// params -> [(name, type)], stopping just past the closing ')'.
+parse_params := (toks: [(str, str)], pos: int) -> ([str], int) {
+  ps: &[(str, str)] := []
+  cur: &int := pos
+  { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
+    nm := ttext(toks, cur)
+    ty, p := tkind(toks, cur + 1) == ":" ? parse_type(toks, cur + 2) : ("i64", cur + 1)
+    ps = ps + [(nm, ty)]
+    cur = tkind(toks, p) == "," ? p + 1 : p
+    ()
+  }
+  (ps, cur + 1)
+}
+
+// name := ( params ) -> rettype { stmts }
 parse_fn := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   name := ttext(toks, pos)
   params, p1 := parse_params(toks, pos + 3)        // skip name := (
-  b: &int := p1
+  rty, p2 := tkind(toks, p1) == "->" ? parse_type(toks, p1 + 1) : ("i64", p1)
+  b: &int := p2
   { tkind(toks, b) != "{" && tkind(toks, b) != "eof" } @ { b += 1; () }
-  stmts, p2 := parse_body(toks, b + 1)
-  (("fn", name, params, stmts), p2 + 1)
+  stmts, p3 := parse_body(toks, b + 1)
+  (("fn", name, params, rty, stmts), p3 + 1)
 }
 
 parse_program := (toks: [(str, str)]) -> [(str, str)] {
@@ -379,7 +429,7 @@ gen_args := (args: [(str, str)], env: [(str, str)], c0: int) -> (str, str, int) 
   args @ (i: a => {
     a2, op, af, at, c2 := gen_expr(a, env, c)
     ir = ir + a2
-    ops = ops + (i == 0 ? "" : ", ") + "i64 " + op
+    ops = ops + (i == 0 ? "" : ", ") + lltype(at) + " " + op
     c = c2
     ()
   })
@@ -457,8 +507,10 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   } :
   node.0 == "call" ? {
     air, ops, c2 := gen_args(node.2, env, c)
+    rt := (lookup_type(env, node.1)).1                 // ("fn", rettype) -> rettype
     reg := `%t{c2}`
-    (air + "  " + reg + " = call i64 @" + node.1 + "(" + ops + ")\n", reg, "true", "i64", c2 + 1)
+    (air + "  " + reg + " = call " + lltype(rt) + " @" + node.1 + "(" + ops + ")\n",
+     reg, "true", rt, c2 + 1)
   } :
   node.0 == "if" ? {
     cir, tag, c1 := gen_cond(node.1, env, c)
@@ -629,11 +681,11 @@ gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], in
   { i2, op, of, ot, c2 := gen_expr(s.1, env, c); (i2, env, c2, op, of) }
 }
 
-gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int) -> str {
+gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> str {
   ir:  &str := ""
   env: &[(str, str)] := env0
   c:   &int := c0
-  ret: &str := "0"
+  ret: &str := retll == "i64" ? "0" : "zeroinitializer"
   stmts @ (s => {
     si, e2, c2, op, of := gen_stmt(s, env, c)
     ir = ir + si
@@ -642,27 +694,32 @@ gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int) -> str {
     op != "" ? { ret = op } : ()
     ()
   })
-  ir + "  ret i64 " + ret + "\n"
+  ir + "  ret " + retll + " " + ret + "\n"
 }
 
-// ("fn", name, params, stmts) -> a complete `define`.
-gen_fn := (fn: (str, str)) -> str {
+// ("fn", name, params, rettype, stmts) -> a complete `define`. ftab seeds the
+// env with every top-level function's signature so calls resolve return types.
+gen_fn := (fn: (str, str), ftab: [(str, str)]) -> str {
   name   := fn.1
-  params := fn.2
-  stmts  := fn.3
+  params := fn.2                                        // [(name, type)]
+  rty    := fn.3
+  stmts  := fn.4
+  retll  := lltype(rty)
   sig:   &str := ""
   setup: &str := ""
-  env0:  &[(str, str)] := []
-  params @ (i: pname => {
+  env0:  &[(str, str)] := ftab
+  params @ (i: pr => {
+    pty  := pr.1
+    pll  := lltype(pty)
     pp   := `%a{i}`
     slot := `%a{i}_addr`
-    sig   = sig + (i == 0 ? "" : ", ") + "i64 " + pp
-    setup = setup + "  " + slot + " = alloca i64\n  store i64 " + pp + ", ptr " + slot + "\n"
-    env0  = env0 + [(pname, slot, "i64")]
+    sig   = sig + (i == 0 ? "" : ", ") + pll + " " + pp
+    setup = setup + "  " + slot + " = alloca " + pll + "\n  store " + pll + " " + pp + ", ptr " + slot + "\n"
+    env0  = env0 + [(pr.0, slot, pty)]
     ()
   })
-  "define i64 @" + name + "(" + sig + ") {\n" +
-  "entry:\n" + setup + gen_body(stmts, env0, 0) + "}\n"
+  "define " + retll + " @" + name + "(" + sig + ") {\n" +
+  "entry:\n" + setup + gen_body(stmts, env0, 0, retll) + "}\n"
 }
 
 // the module preamble: a static bump arena (allocate, never free until exit;
@@ -680,8 +737,10 @@ preamble := () -> str {
 }
 
 gen := (fns: [(str, str)]) -> str {
+  ftab: &[(str, str)] := []                            // name -> (@name, ("fn", rettype))
+  fns @ (f => { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))]; () })
   out: &str := preamble()
-  fns @ (f => { out = out + gen_fn(f); () })
+  fns @ (f => { out = out + gen_fn(f, ftab); () })
   out
 }
 
