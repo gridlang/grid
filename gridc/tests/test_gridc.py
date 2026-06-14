@@ -287,3 +287,23 @@ def test_present_relations_and_blocks(program, val, tmp_path):
 def test_arm_patterns(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # pass a function by name, call it indirectly through a param
+    ('apply := (f: (int) -> int, x: int) -> int { f(x) }\n'
+     'inc := (n: int) -> int { n + 1 }\nmain := () -> int { apply(inc, 41) }', 42),
+    # the param is called twice (nested indirect calls)
+    ('twice := (f: (int) -> int, x: int) -> int { f(f(x)) }\n'
+     'dbl := (n: int) -> int { n * 2 }\nmain := () -> int { twice(dbl, 5) }', 20),
+    # a str-predicate passed by name, called and used as a condition (scan shape)
+    ('chk := (c: str, p: (str) -> str) -> int { p(c) ? 1 : 0 }\n'
+     'dig := (c: str) -> str { c >= "0" && c <= "9" }\n'
+     'main := () -> int { chk("7", dig) * 10 + chk("z", dig) }', 10),
+    # a function param with a str arg and int return
+    ('app := (f: (str) -> int, s: str) -> int { f(s) }\n'
+     'ln := (s: str) -> int { s.len }\nmain := () -> int { app(ln, "hello") }', 5),
+])
+def test_function_values(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

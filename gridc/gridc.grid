@@ -458,8 +458,11 @@ lltype := (t: str) -> str {
   t == "i64" ? "i64" :
   t == "str" ? "{i64, ptr}" :
   t.0 == "lst" ? "{i64, ptr}" :
+  t.0 == "fn" ? "ptr" :                                 // a function value is a code pointer
   "{" + tup_ll(t.1) + "}"
 }
+
+is_fn := (t: str) -> str { t != "i64" && t != "str" && t.0 == "fn" }
 
 tup_ll := (fields: [str]) -> str {
   out: &str := ""
@@ -624,9 +627,16 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     (head + store + pack, v2, "true", "str", c + 3)
   } :
   node.0 == "name" ? {
-    reg := `%t{c}`
     ty := lookup_type(env, node.1)
-    ("  " + reg + " = load " + lltype(ty) + ", ptr " + lookup(env, node.1) + "\n", reg, "true", ty, c + 1)
+    slot := lookup(env, node.1)
+    is_fn(ty) ? {                                        // a function value
+      slot[0] == "@" ?
+        ("", slot, "true", ty, c) :                      // top-level fn: its address @name
+        { reg := `%t{c}`                                 // fn-valued param: load the code ptr
+          ("  " + reg + " = load ptr, ptr " + slot + "\n", reg, "true", ty, c + 1) }
+    } :
+    { reg := `%t{c}`
+      ("  " + reg + " = load " + lltype(ty) + ", ptr " + slot + "\n", reg, "true", ty, c + 1) }
   } :
   node.0 == "tuple" ? {                                 // (a, b, ...) -> aggregate
     eir, ops, tys, c1 := gen_elems(node.1, env, c)
@@ -720,10 +730,11 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     }
   } :
   node.0 == "call" ? {
-    air, ops, c2 := gen_args(node.2, env, c)
-    rt := (lookup_type(env, node.1)).1                 // ("fn", rettype) -> rettype
+    cir, callee, cf, ct, c1 := gen_expr(("name", node.1), env, c)  // @name or a loaded fn ptr
+    air, ops, c2 := gen_args(node.2, env, c1)
+    rt := ct.1                                          // ("fn", rettype) -> rettype
     reg := `%t{c2}`
-    (air + "  " + reg + " = call " + lltype(rt) + " @" + node.1 + "(" + ops + ")\n",
+    (cir + air + "  " + reg + " = call " + lltype(rt) + " " + callee + "(" + ops + ")\n",
      reg, "true", rt, c2 + 1)
   } :
   node.0 == "if" ? {
