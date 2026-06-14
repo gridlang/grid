@@ -104,3 +104,23 @@ def test_functions_and_control(program, val, tmp_path):
 ])
 def test_range_reduce_matches_interpreter(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # one-armed `?` (try): present yields the value, absent yields ()
+    ("main := () -> int { 5 > 3 ? 42 }", 42),
+    ("main := () -> int { 5 < 3 ? 42 }", 0),
+    # a one-armed try bound and used later (absent -> () -> 0 at the exit boundary)
+    ("main := () -> int {\n  x := 7 > 2 ? 9\n  x + 1\n}", 10),
+    # @ first-success (find): first element whose arm is present, exit early
+    ("main := () -> int {\n  1..10 @ (n => n * n > 30 ? n)\n}", 6),
+    # find that matches nothing -> ()
+    ("main := () -> int {\n  1..3 @ (n => n > 99 ? n)\n}", 0),
+    # the arm's present payload can be a computed value
+    ("main := () -> int {\n  hit := 1..10 @ (n => n * n > 30 ? n * n)\n  hit\n}", 36),
+    # reduce and find compose: sum 1..5, then find first > 2
+    ("main := () -> int {\n  s: &int := 0\n  1..5 @ (n => s += n)\n  f := 1..10 @ (n => n > 2 ? n)\n  s + f\n}", 18),
+])
+def test_present_unit_value_model(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
