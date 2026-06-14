@@ -66,3 +66,22 @@ def test_arith_matches_interpreter(expr, val, tmp_path):
 def test_locals_match_interpreter(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # mutable accumulator / store
+    ("main := () -> int {\n  s: &int := 0\n  s += 40\n  s += 2\n  s\n}", 42),
+    ("main := () -> int {\n  x: &int := 10\n  x = 42\n  x\n}", 42),
+    # functions + calls
+    ("add := (a: int, b: int) -> int { a + b }\nmain := () -> int { add(40, 2) }", 42),
+    ("sq := (n: int) -> int { n * n }\nmain := () -> int { sq(5) + sq(4) + 1 }", 42),
+    # relations + ?:
+    ("main := () -> int { 5 > 3 ? 42 : 0 }", 42),
+    ("main := () -> int { 3 > 5 ? 0 : 42 }", 42),
+    # nested ?: ladder
+    ("g := (n: int) -> int { n >= 90 ? 4 : n >= 80 ? 3 : 0 }\n"
+     "main := () -> int { g(85) + g(95) * 10 }", 43),
+])
+def test_functions_and_control(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

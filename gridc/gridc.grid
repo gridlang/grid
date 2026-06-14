@@ -4,8 +4,12 @@
 //
 // Emits LLVM IR text; `clang out.ll -o bin` links a native binary.
 //
-// Rungs: C1 literal · C2 lexer · C3 parser · C4 arithmetic codegen ·
-//        C5a immutable `:=` locals.
+// Rungs: C1 literal · C2 lexer · C3 parser · C4 arithmetic ·
+//        C5a immutable locals · C5b mutable locals + stores · C5c functions + calls.
+//
+// Subset compiled: a program is one or more `name := (params) -> int { stmts }`
+// functions over i64; stmts are lets / stores / in-place / a final result expr;
+// exprs are integer arithmetic, locals, and calls. `main` is the entry point.
 //
 // Note: `?:` ladders put the `:` at the END of a line (a newline after `:`
 // continues; a newline after `}` would end the statement).
@@ -15,9 +19,6 @@ import fs
 import sys
 
 // ── lexer ────────────────────────────────────────────────────────────
-// token = (kind, text). operators are self-kinded; literals carry a tag;
-// statement breaks (newline / `;`) become ("nl", ...).
-
 digit := (c: str) -> str { c >= "0" && c <= "9" }
 alpha := (c: str) -> str { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" }
 space := (c: str) -> str { c == " " || c == "\t" || c == "\r" }
@@ -42,7 +43,11 @@ lex := (src: str) -> [(str, str)] {
     {
       two := i + 1 < n ? src[i] + src[i + 1] : ""
       two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
-      (two == ":=" || two == "->" || two == "=>") ? { toks = toks + [(two, two)]; i += 2 } :
+      (two == ":=" || two == "->" || two == "=>" ||
+       two == "+=" || two == "-=" || two == "*=" || two == "/=" ||
+       two == "==" || two == "!=" || two == "<=" || two == ">=") ? {
+        toks = toks + [(two, two)]; i += 2
+      } :
       { toks = toks + [(c, c)]; i += 1 }
     }
     ()
@@ -51,20 +56,41 @@ lex := (src: str) -> [(str, str)] {
 }
 
 // ── parser ───────────────────────────────────────────────────────────
-// expr AST:  ("int", "42") · ("name", "x") · ("bin", "+", lhs, rhs)
-// stmt AST:  ("let", name, expr) · ("ret", expr)
+// expr: ("int",v) ("name",x) ("bin",op,l,r) ("call",name,[args])
+// stmt: ("let",n,e) ("store",n,e) ("inplace",n,op,e) ("ret",e)
+// top:  ("fn", name, [params], [stmts])
 
 tkind := (toks: [(str, str)], pos: int) -> str { pos < toks.len ? toks[pos].0 : "eof" }
 ttext := (toks: [(str, str)], pos: int) -> str { toks[pos].1 }
 
 mulop := (k: str) -> str { k == "*" || k == "/" || k == "%" }
 addop := (k: str) -> str { k == "+" || k == "-" }
+cmpop := (k: str) -> str { k == "==" || k == "!=" || k == "<" || k == "<=" || k == ">" || k == ">=" }
+inplaceop := (k: str) -> str { k == "+=" || k == "-=" || k == "*=" || k == "/=" }
+
+parse_args := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
+  args: &[(str, str)] := []
+  cur: &int := pos
+  { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
+    node, p := parse_expr(toks, cur)
+    args = args + [node]
+    cur = tkind(toks, p) == "," ? p + 1 : p
+    ()
+  }
+  (args, cur + 1)
+}
 
 parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   k := tkind(toks, pos)
-  k == "int"  ? (("int", ttext(toks, pos)), pos + 1) :
-  k == "name" ? (("name", ttext(toks, pos)), pos + 1) :
-  k == "("    ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
+  k == "int" ? (("int", ttext(toks, pos)), pos + 1) :
+  k == "name" ? {
+    tkind(toks, pos + 1) == "(" ? {
+      args, p := parse_args(toks, pos + 2)
+      (("call", ttext(toks, pos), args), p)
+    } :
+    (("name", ttext(toks, pos)), pos + 1)
+  } :
+  k == "(" ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
   (("int", "0"), pos + 1)
 }
 
@@ -96,7 +122,28 @@ parse_add := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (acc, cur)
 }
 
-parse_expr := (toks: [(str, str)], pos: int) -> ((str, str), int) { parse_add(toks, pos) }
+// a single relation (no chaining yet): ("rel", op, l, r)
+parse_cmp := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  l, p := parse_add(toks, pos)
+  cmpop(tkind(toks, p)) ? {
+    r, p2 := parse_add(toks, p + 1)
+    (("rel", ttext(toks, p), l, r), p2)
+  } :
+  (l, p)
+}
+
+// cond ? then : else  ->  ("if", cond, then, else)   (loosest, right-assoc)
+parse_ternary := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  cond, p := parse_cmp(toks, pos)
+  tkind(toks, p) == "?" ? {
+    then, p2 := parse_expr(toks, p + 1)
+    els, p3 := parse_expr(toks, p2 + 1)
+    (("if", cond, then, els), p3)
+  } :
+  (cond, p)
+}
+
+parse_expr := (toks: [(str, str)], pos: int) -> ((str, str), int) { parse_ternary(toks, pos) }
 
 skip_nl := (toks: [(str, str)], pos: int) -> int {
   cur: &int := pos
@@ -104,44 +151,153 @@ skip_nl := (toks: [(str, str)], pos: int) -> int {
   cur
 }
 
+// skip a type annotation `: ... :=`, returning the index just past `:=`.
+skip_type := (toks: [(str, str)], pos: int) -> int {
+  cur: &int := pos
+  { tkind(toks, cur) != ":=" && tkind(toks, cur) != "eof" } @ { cur += 1; () }
+  cur + 1
+}
+
 parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
-  tkind(toks, pos) == "name" && tkind(toks, pos + 1) == ":=" ? {
-    name := ttext(toks, pos)
-    node, p := parse_expr(toks, pos + 2)
-    (("let", name, node), p)
+  k0 := tkind(toks, pos)
+  k1 := tkind(toks, pos + 1)
+  k0 == "name" && k1 == ":=" ? {
+    node, p := parse_expr(toks, pos + 2); (("let", ttext(toks, pos), node), p)
+  } :
+  k0 == "name" && k1 == ":" ? {
+    node, p := parse_expr(toks, skip_type(toks, pos + 2)); (("let", ttext(toks, pos), node), p)
+  } :
+  k0 == "name" && k1 == "=" ? {
+    node, p := parse_expr(toks, pos + 2); (("store", ttext(toks, pos), node), p)
+  } :
+  k0 == "name" && inplaceop(k1) ? {
+    node, p := parse_expr(toks, pos + 2); (("inplace", ttext(toks, pos), k1, node), p)
   } :
   { node, p := parse_expr(toks, pos); (("ret", node), p) }
 }
 
-// parse main's body: the statements between { and }.
-parse_program := (toks: [(str, str)]) -> [(str, str)] {
-  b: &int := 0
-  { tkind(toks, b) != "{" && b < toks.len } @ { b += 1; () }
+parse_body := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
   stmts: &[(str, str)] := []
-  cur: &int := skip_nl(toks, b + 1)
+  cur: &int := skip_nl(toks, pos)
   { tkind(toks, cur) != "}" && tkind(toks, cur) != "eof" } @ {
     s, p := parse_stmt(toks, cur)
     stmts = stmts + [s]
     cur = skip_nl(toks, p)
     ()
   }
-  stmts
+  (stmts, cur)
+}
+
+parse_params := (toks: [(str, str)], pos: int) -> ([str], int) {
+  names: &[str] := []
+  cur: &int := pos
+  { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
+    tkind(toks, cur) == "name" ? { names = names + [ttext(toks, cur)] } : ()
+    { tkind(toks, cur) != "," && tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ { cur += 1; () }
+    cur = tkind(toks, cur) == "," ? cur + 1 : cur
+    ()
+  }
+  (names, cur + 1)
+}
+
+// name := ( params ) -> type { stmts }
+parse_fn := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  name := ttext(toks, pos)
+  params, p1 := parse_params(toks, pos + 3)        // skip name := (
+  b: &int := p1
+  { tkind(toks, b) != "{" && tkind(toks, b) != "eof" } @ { b += 1; () }
+  stmts, p2 := parse_body(toks, b + 1)
+  (("fn", name, params, stmts), p2 + 1)
+}
+
+parse_program := (toks: [(str, str)]) -> [(str, str)] {
+  fns: &[(str, str)] := []
+  cur: &int := skip_nl(toks, 0)
+  { tkind(toks, cur) != "eof" } @ {
+    f, p := parse_fn(toks, cur)
+    fns = fns + [f]
+    cur = skip_nl(toks, p)
+    ()
+  }
+  fns
 }
 
 // ── codegen ──────────────────────────────────────────────────────────
-// codegen env is an assoc list (name, operand); immutable `:=` locals are SSA
-// values, so a name simply maps to the operand its initializer produced.
-
 llop := (op: str) -> str {
   op == "+" ? "add" : op == "-" ? "sub" : op == "*" ? "mul" : op == "/" ? "sdiv" : "srem"
+}
+iop := (k: str) -> str { k == "+=" ? "+" : k == "-=" ? "-" : k == "*=" ? "*" : "/" }
+relpred := (op: str) -> str {
+  op == "==" ? "eq" : op == "!=" ? "ne" : op == "<" ? "slt" :
+  op == "<=" ? "sle" : op == ">" ? "sgt" : "sge"
 }
 
 lookup := (env: [(str, str)], name: str) -> str { env @ ((n, v) => n == name ? v) }
 
+// gen a condition -> (instructions, i1 tag, counter). A relation is an icmp;
+// any other (present) value is the constant `true`.
+gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
+  node.0 == "rel" ? {
+    la, lv, c1 := gen_expr(node.2, env, c)
+    ra, rv, c2 := gen_expr(node.3, env, c1)
+    tag := `%t{c2}`
+    (la + ra + "  " + tag + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n",
+     tag, c2 + 1)
+  } :
+  { e, v, c1 := gen_expr(node, env, c); (e, "true", c1) }
+}
+
+// gen each call argument, returning (instructions, "i64 a, i64 b", counter).
+gen_args := (args: [(str, str)], env: [(str, str)], c0: int) -> (str, str, int) {
+  ir:  &str := ""
+  ops: &str := ""
+  c:   &int := c0
+  args @ (i: a => {
+    a2, op, c2 := gen_expr(a, env, c)
+    ir = ir + a2
+    ops = ops + (i == 0 ? "" : ", ") + "i64 " + op
+    c = c2
+    ()
+  })
+  (ir, ops, c)
+}
+
 // gen_expr -> (instructions, operand, next-temp-counter)
 gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
   node.0 == "int"  ? ("", node.1, c) :
-  node.0 == "name" ? ("", lookup(env, node.1), c) :
+  node.0 == "name" ? {
+    reg := `%t{c}`
+    ("  " + reg + " = load i64, ptr " + lookup(env, node.1) + "\n", reg, c + 1)
+  } :
+  node.0 == "call" ? {
+    air, ops, c2 := gen_args(node.2, env, c)
+    reg := `%t{c2}`
+    (air + "  " + reg + " = call i64 @" + node.1 + "(" + ops + ")\n", reg, c2 + 1)
+  } :
+  node.0 == "if" ? {
+    cir, tag, c1 := gen_cond(node.1, env, c)
+    res := `%r{c1}`
+    tir, tv, c3 := gen_expr(node.2, env, c1 + 1)
+    eir, ev, c4 := gen_expr(node.3, env, c3)
+    L := `{c4}`                                       // shared label suffix
+    body := cir + "  " + res + " = alloca i64\n" +
+      "  br i1 " + tag + ", label %then" + L + ", label %else" + L + "\n" +
+      "then" + L + ":\n" + tir + "  store i64 " + tv + ", ptr " + res +
+        "\n  br label %merge" + L + "\n" +
+      "else" + L + ":\n" + eir + "  store i64 " + ev + ", ptr " + res +
+        "\n  br label %merge" + L + "\n" +
+      "merge" + L + ":\n"
+    reg := `%t{c4 + 1}`
+    (body + "  " + reg + " = load i64, ptr " + res + "\n", reg, c4 + 2)
+  } :
+  node.0 == "rel" ? {                                  // relation as a value -> 0/1
+    la, lv, c1 := gen_expr(node.2, env, c)
+    ra, rv, c2 := gen_expr(node.3, env, c1)
+    cmp := `%t{c2}`
+    reg := `%t{c2 + 1}`
+    (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
+     "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, c2 + 2)
+  } :
   {
     la, lv, c1 := gen_expr(node.2, env, c)
     ra, rv, c2 := gen_expr(node.3, env, c1)
@@ -151,18 +307,36 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
   }
 }
 
-gen_body := (stmts: [(str, str)]) -> str {
+gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int) -> str {
   ir:  &str := ""
-  env: &[(str, str)] := []
-  c:   &int := 0
+  env: &[(str, str)] := env0
+  c:   &int := c0
   ret: &str := "0"
   stmts @ (s => {
     s.0 == "let" ? {
       i2, op, c2 := gen_expr(s.2, env, c)
-      ir = ir + i2
-      env = env + [(s.1, op)]
+      slot := `%s{c2}`
+      ir = ir + i2 + "  " + slot + " = alloca i64\n  store i64 " + op + ", ptr " + slot + "\n"
+      env = env + [(s.1, slot)]
+      c = c2 + 1
+    } :
+    s.0 == "store" ? {
+      i2, op, c2 := gen_expr(s.2, env, c)
+      ir = ir + i2 + "  store i64 " + op + ", ptr " + lookup(env, s.1) + "\n"
       c = c2
-    } : {
+    } :
+    s.0 == "inplace" ? {
+      i2, op, c2 := gen_expr(s.3, env, c)
+      slot := lookup(env, s.1)
+      cur := `%t{c2}`
+      res := `%t{c2 + 1}`
+      ir = ir + i2 +
+        "  " + cur + " = load i64, ptr " + slot + "\n" +
+        "  " + res + " = " + llop(iop(s.2)) + " i64 " + cur + ", " + op + "\n" +
+        "  store i64 " + res + ", ptr " + slot + "\n"
+      c = c2 + 2
+    } :
+    {
       i2, op, c2 := gen_expr(s.1, env, c)
       ir = ir + i2
       ret = op
@@ -173,12 +347,30 @@ gen_body := (stmts: [(str, str)]) -> str {
   ir + "  ret i64 " + ret + "\n"
 }
 
-gen := (stmts: [(str, str)]) -> str {
-  "; gridc\n" +
-  "define i64 @main() {\n" +
-  "entry:\n" +
-  gen_body(stmts) +
-  "}\n"
+// ("fn", name, params, stmts) -> a complete `define`.
+gen_fn := (fn: (str, str)) -> str {
+  name   := fn.1
+  params := fn.2
+  stmts  := fn.3
+  sig:   &str := ""
+  setup: &str := ""
+  env0:  &[(str, str)] := []
+  params @ (i: pname => {
+    pp   := `%a{i}`
+    slot := `%a{i}_addr`
+    sig   = sig + (i == 0 ? "" : ", ") + "i64 " + pp
+    setup = setup + "  " + slot + " = alloca i64\n  store i64 " + pp + ", ptr " + slot + "\n"
+    env0  = env0 + [(pname, slot)]
+    ()
+  })
+  "define i64 @" + name + "(" + sig + ") {\n" +
+  "entry:\n" + setup + gen_body(stmts, env0, 0) + "}\n"
+}
+
+gen := (fns: [(str, str)]) -> str {
+  out: &str := "; gridc\n"
+  fns @ (f => { out = out + gen_fn(f); () })
+  out
 }
 
 main := (args: [str]) -> int {
