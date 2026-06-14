@@ -44,6 +44,8 @@ class Block:     items: list
 @dataclass
 class Match:     pat: object; res: object
 @dataclass
+class KeyedMatch: key: object; pat: object; res: object   # iteration arm: kpat: vpat => res
+@dataclass
 class Fn:        params: list; body: object; fallible: bool = False; stateful: bool = False
 @dataclass
 class Emit:      value: object                          # prefix >> (yield from a stream)
@@ -60,7 +62,9 @@ class Bang:      expr: object                           # postfix ! (raise / unw
 @dataclass
 class Interp:    parts: list                            # list of ("lit", str) | ("expr", node)
 @dataclass
-class Destructure: names: list; value: object
+class Destructure: names: list; value: object; store: bool = False
+@dataclass
+class Store:      target: object; value: object         # `place = expr` / `place[i] = expr`
 @dataclass
 class Member:    obj: object; key: object               # str field or int index
 @dataclass
@@ -160,30 +164,34 @@ class Parser:
             return d
         if self.at("NAME"):
             nxt = self.peek()
-            if nxt.kind == "INPLACE":
+            if nxt.kind == "INPLACE":                          # place += expr  (store)
                 name = self.eat("NAME").val
-                op = self.eat("INPLACE").val[0]
+                op = self.eat("INPLACE").val[:-1]              # strip trailing '='
                 self.nl()
                 return InPlace(name, op, self.parse_expr())
-            if nxt.kind == "PUNCT" and nxt.val == ":":
+            if nxt.kind == "DEFINE":                           # name := expr  (introduce)
+                name = self.eat("NAME").val
+                self.eat("DEFINE"); self.nl()
+                return Bind(name, self.parse_expr())
+            if nxt.kind == "PUNCT" and nxt.val == ":":         # name: [&|*]T [:=|= expr]  (introduce)
                 name = self.eat("NAME").val
                 self.eat("PUNCT", ":")
                 mutable = False
-                if self.at("PUNCT", "&"):
-                    self.eat("PUNCT", "&")
+                if self.at("PUNCT", "&") or self.at("OP", "*"):
+                    self.i += 1
                     mutable = True
                 self.parse_type()                 # parsed for shape, ignored at runtime
                 value = None
-                if self.at("PUNCT", "="):
-                    self.eat("PUNCT", "=")
+                if self.at("DEFINE") or self.at("PUNCT", "="):
+                    self.i += 1
                     self.nl()
                     value = self.parse_expr()
                 return Bind(name, value, mutable)
-            if nxt.kind == "PUNCT" and nxt.val == "=":
+            if nxt.kind == "PUNCT" and nxt.val == "=":         # place = expr  (store, must exist)
                 name = self.eat("NAME").val
                 self.eat("PUNCT", "=")
                 self.nl()
-                return Bind(name, self.parse_expr())
+                return Store(Name(name), self.parse_expr())
         e = self.parse_expr()
         if self.at("FATARROW"):
             self.eat("FATARROW")
@@ -203,11 +211,18 @@ class Parser:
                 return None
             names.append(self.toks[j].val)
             j += 1
-        if len(names) < 2 or not (self.toks[j].kind == "PUNCT" and self.toks[j].val == "="):
+        if len(names) < 2:
+            return None
+        tj = self.toks[j]
+        if tj.kind == "DEFINE":                            # a, b := expr  (introduce)
+            store = False
+        elif tj.kind == "PUNCT" and tj.val == "=":         # a, b = expr   (store)
+            store = True
+        else:
             return None
         self.i = j + 1
         self.nl()
-        return Destructure(names, self.parse_expr())
+        return Destructure(names, self.parse_expr(), store)
 
     def parse_arm_result(self):
         # an arm's right-hand side may be an in-place op (e.g. `=> sum += n`)
@@ -240,7 +255,7 @@ class Parser:
         depth = 0
         while True:
             t = self.cur()
-            if t.kind in ("EOF", "NL"):
+            if t.kind in ("EOF", "NL", "DEFINE"):
                 return
             if t.kind == "PUNCT" and t.val in ("(", "["):
                 depth += 1
@@ -286,6 +301,15 @@ class Parser:
         # expression on the right (arm-result form — allows `+=` / `>>` / `~`). So a bare
         # `pat => result` works anywhere an expression does, e.g. `f() ? x => g(x) : h()`.
         left = self.parse_or()
+        if self.at("PUNCT", ":"):                  # maybe a keyed pattern  kpat: vpat => res
+            save = self.i
+            self.eat("PUNCT", ":"); self.nl()
+            val = self.parse_or()
+            if self.at("FATARROW"):
+                self.eat("FATARROW"); self.nl()
+                return KeyedMatch(self.to_pattern(left), self.to_pattern(val),
+                                  self.parse_arm_result())
+            self.i = save                          # not keyed (e.g. a ?: else) — back out
         if self.at("FATARROW"):
             self.eat("FATARROW"); self.nl()
             return Match(self.to_pattern(left), self.parse_arm_result())
@@ -311,7 +335,7 @@ class Parser:
             if self.at("PUNCT", "#") or self.at("PUNCT", "@"):
                 op = self.eat("PUNCT").val
                 self.nl()
-                left = Iter(op, left, self.parse_block())
+                left = Iter(op, left, self.parse_cmp())   # body: bare expr, or a ({}/()) group
             else:
                 return left
 
@@ -472,11 +496,46 @@ class Parser:
             return self.parse_list()
         raise SyntaxError(f"unexpected {t}")
 
+    def _paren_has_arrow(self):
+        # is there a top-level `=>` before this paren group closes? (keyed pattern vs struct)
+        depth = 0
+        j = self.i
+        n = len(self.toks)
+        while j < n:
+            t = self.toks[j]
+            if t.kind == "EOF":
+                return False
+            if t.kind == "PUNCT" and t.val in ("(", "[", "{"):
+                depth += 1
+            elif t.kind == "PUNCT" and t.val in (")", "]", "}"):
+                if depth == 0:
+                    return False
+                depth -= 1
+            elif t.kind == "FATARROW" and depth == 0:
+                return True
+            j += 1
+        return False
+
     def parse_paren(self):
         self.eat("PUNCT", "("); self.nl()
         if self.at("PUNCT", ")"):
             self.eat("PUNCT", ")"); return Unit()
-        if self.at("NAME") and self.peek().kind == "PUNCT" and self.peek().val == ":":
+        if self.at("NAME"):                                # a parenthesized body-statement
+            nxt = self.peek()
+            if nxt.kind == "INPLACE":
+                name = self.eat("NAME").val; op = self.eat("INPLACE").val[:-1]; self.nl()
+                v = self.parse_expr(); self.nl(); self.eat("PUNCT", ")")
+                return InPlace(name, op, v)
+            if nxt.kind == "DEFINE":
+                name = self.eat("NAME").val; self.eat("DEFINE"); self.nl()
+                v = self.parse_expr(); self.nl(); self.eat("PUNCT", ")")
+                return Bind(name, v)
+            if nxt.kind == "PUNCT" and nxt.val == "=":
+                name = self.eat("NAME").val; self.eat("PUNCT", "="); self.nl()
+                v = self.parse_expr(); self.nl(); self.eat("PUNCT", ")")
+                return Store(Name(name), v)
+        if (self.at("NAME") and self.peek().kind == "PUNCT" and self.peek().val == ":"
+                and not self._paren_has_arrow()):          # struct (x: 1), not a keyed pattern
             return self.parse_struct_rest()
         first = self.parse_expr(); self.nl()
         if self.at("PUNCT", ","):

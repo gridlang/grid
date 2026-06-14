@@ -9,7 +9,7 @@ out collecting present results; `@` threads — present body exits the loop, () 
 from .parser import (
     parse, Lit, Unit, Name, Tuple, ListLit, MapLit, StructLit, Bind, InPlace, Bin, Range,
     Try, Iter, Block, Match, Fn, Call, Member, MethodCall, Index, Bang, Interp,
-    Destructure, Emit, Defer, ModuleDecl, ImportDecl,
+    Destructure, Store, Emit, Defer, ModuleDecl, ImportDecl, KeyedMatch,
     LitPat, UnitPat, BindPat, WildPat, TuplePat,
 )
 
@@ -100,6 +100,7 @@ class Stream:
 
 _emit_stack = []        # stack of collectors; >> appends to the top (one per running stream)
 _defer_stack = []       # stack of frames; ~ appends (expr, env); run LIFO at function exit
+_key_stack = []         # stack of iteration keys; a keyed pattern `k: v` reads the top
 
 
 # ─── a small stdlib (namespaces are just dicts of builtins) ──────────────────
@@ -190,7 +191,7 @@ def eval_node(node, env, topic):
         return UNIT
     if t is Name:
         if node.id == "_":
-            raise SyntaxError("`_` is a pattern, not a value")
+            return topic                               # `_` is the body's current argument
         return env.get(node.id)
     if t is Tuple:
         return tuple(eval_node(i, env, topic) for i in node.items)
@@ -240,11 +241,18 @@ def eval_node(node, env, topic):
             part if kind == "lit" else grid_str(eval_node(part, env, topic))
             for kind, part in node.parts
         )
+    if t is Store:                                     # `place = expr` — store, never introduce
+        val = eval_node(node.value, env, topic)
+        if type(node.target) is Name:
+            env.assign(node.target.id, val)            # raises if the place was never introduced
+        else:
+            return eval_store_index(node.target, val, env, topic)
+        return UNIT
     if t is Destructure:
         parts = as_pair(eval_node(node.value, env, topic))
         for name, val in zip(node.names, parts):
             if name != "_":
-                env.define(name, val)
+                (env.assign if node.store else env.define)(name, val)
         return UNIT
     if t is Member:
         return eval_member(eval_node(node.obj, env, topic), node.key)
@@ -268,8 +276,21 @@ def eval_node(node, env, topic):
         if match_pat(node.pat, topic, sub):
             return eval_node(node.res, sub, topic)
         return UNIT
+    if t is KeyedMatch:
+        sub = Env(env)
+        if (_key_stack and match_pat(node.key, _key_stack[-1], sub)
+                and match_pat(node.pat, topic, sub)):
+            return eval_node(node.res, sub, topic)
+        return UNIT
 
     raise RuntimeError(f"cannot eval {node}")
+
+
+def eval_body(body, env, value):
+    """Run a combinator body with `value` as its current argument (`_`)."""
+    if type(body) is Block:
+        return eval_scope_block(body, Env(env), value)
+    return eval_node(body, Env(env), value)
 
 
 def eval_call(node, env, topic):
@@ -412,17 +433,21 @@ def eval_scope_block(block, env, topic):
     # block's return is its last value (here `()` is NOT transparent — a trailing `()`
     # still returns `()`, which is what lets an `@` body force "continue").
     val = UNIT
-    cur = topic
-    for item in block.items:
-        if type(item) is Match:
+    for item in block.items:                           # topic is FROZEN — no threading
+        ti = type(item)
+        if ti is Match:
             sub = Env(env)
-            if match_pat(item.pat, cur, sub):
-                return eval_node(item.res, sub, cur)
+            if match_pat(item.pat, topic, sub):
+                return eval_node(item.res, sub, topic)
+            val = UNIT
+        elif ti is KeyedMatch:
+            sub = Env(env)
+            if (_key_stack and match_pat(item.key, _key_stack[-1], sub)
+                    and match_pat(item.pat, topic, sub)):
+                return eval_node(item.res, sub, topic)
             val = UNIT
         else:
-            val = eval_node(item, env, cur)
-            if present(val):
-                cur = val
+            val = eval_node(item, env, topic)
     return val
 
 
@@ -439,25 +464,33 @@ def _source_items(v):
     return None
 
 
+def _drive_step(body, env, key, value):
+    """Run the body for one keyed step: `_` = value, the key is on _key_stack."""
+    _key_stack.append(key)
+    try:
+        return eval_body(body, env, value)
+    finally:
+        _key_stack.pop()
+
+
 def eval_iter(node, env, topic):
-    if node.op == "#":
-        src = eval_node(node.subj, env, topic)
-        items = _source_items(src)
+    if node.op == "#":                                 # fan-out: collect every present result
+        items = _source_items(eval_node(node.subj, env, topic))
         if items is None:
             return UNIT
         out = []
-        for step in items:
-            v = eval_scope_block(node.block, Env(env), step)
+        for key, value in items:
+            v = _drive_step(node.block, env, key, value)
             if present(v):
                 out.append(v)
         return out
 
     # node.op == "@" — thread the body over a source. A present body value exits
-    # the loop with it (find / break); () continues. The source decides iteration,
-    # and how the source is *driven* is read from its form:
+    # the loop with it (find / break); () continues. How the source is *driven* is
+    # read from its form:
     if node.subj is None:                              # bare @ {}: an always-present source
         while True:
-            v = eval_scope_block(node.block, Env(env), UNIT)
+            v = eval_body(node.block, env, UNIT)
             if present(v):
                 return v
 
@@ -466,20 +499,20 @@ def eval_iter(node, env, topic):
             step = eval_scope_block(node.subj, Env(env), topic)
             if not present(step):
                 return UNIT
-            v = eval_scope_block(node.block, Env(env), step)
+            v = eval_body(node.block, env, step)
             if present(v):
                 return v
 
     first = eval_node(node.subj, env, topic)           # any other source: evaluated once
     items = _source_items(first)
     if items is not None:                              # a collection -> iterate its elements
-        for step in items:
-            v = eval_scope_block(node.block, Env(env), step)
+        for key, value in items:
+            v = _drive_step(node.block, env, key, value)
             if present(v):
                 return v
         return UNIT
     if present(first):                                 # a single value -> thread it once
-        return eval_scope_block(node.block, Env(env), first)
+        return eval_body(node.block, env, first)
     return UNIT                                        # () -> nothing to thread
 
 
