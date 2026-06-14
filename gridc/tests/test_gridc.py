@@ -220,3 +220,28 @@ def test_typed_function_abi(program, val, tmp_path):
 def test_string_compare_and_index(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # list literal + index, length
+    ('xs := [10, 20, 30]\n  xs[1]', 20),
+    ('xs := [4, 5, 6, 7]\n  xs.len', 4),
+    # append (alloc + copy both halves), then measure
+    ('xs := [1, 2]\n  ys := xs + [3]\n  ys.len * 10 + ys[2]', 33),
+    # @ reduce / product over a list
+    ('xs := [1, 2, 3, 4]\n  s: &int := 0\n  xs @ (x => s += x)\n  s', 10),
+    ('xs := [2, 4, 6]\n  p: &int := 1\n  xs @ (x => p *= x)\n  p', 48),
+    # @ first-success find over a list
+    ('xs := [3, 6, 9, 12]\n  xs @ (x => x > 5 ? x)', 6),
+    # grow a list in a loop (typed-let [] seeded from the annotation), then index
+    ('xs: &[int] := []\n  1..4 @ (n => xs += [n * n])\n  xs[2]', 9),
+    ('xs: &[int] := []\n  1..5 @ (n => xs += [n])\n  xs.len', 5),
+    # empty list length
+    ('xs: &[int] := []\n  xs.len', 0),
+    # a str-returning find over a list of strings (find result is typed)
+    ('xs := ["a", "bb", "ccc"]\n  hit := xs @ (s => s.len > 1 ? s)\n  hit.len', 2),
+])
+def test_lists(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

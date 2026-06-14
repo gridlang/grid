@@ -111,6 +111,20 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
     } :
     (("name", ttext(toks, pos)), pos + 1)
   } :
+  k == "[" ? {
+    tkind(toks, pos + 1) == "]" ? (("list", []), pos + 2) :   // empty list
+    {
+      elems: &[(str, str)] := []
+      cur: &int := pos + 1
+      { tkind(toks, cur) != "]" && tkind(toks, cur) != "eof" } @ {
+        e, p := parse_expr(toks, cur)
+        elems = elems + [e]
+        cur = tkind(toks, p) == "," ? p + 1 : p
+        ()
+      }
+      (("list", elems), cur + 1)
+    }
+  } :
   k == "(" ? {
     first, p := parse_expr(toks, pos + 1)
     tkind(toks, p) == "," ? {                          // (a, b, ...) tuple
@@ -279,8 +293,10 @@ parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   k0 == "name" && k1 == ":=" ? {
     node, p := parse_expr(toks, pos + 2); (("let", ttext(toks, pos), node), p)
   } :
-  k0 == "name" && k1 == ":" ? {
-    node, p := parse_expr(toks, skip_type(toks, pos + 2)); (("let", ttext(toks, pos), node), p)
+  k0 == "name" && k1 == ":" ? {                        // name: Type := expr
+    ty, tp := parse_type(toks, pos + 2)                // tp lands on :=
+    node, p := parse_expr(toks, tp + 1)
+    (("letty", ttext(toks, pos), ty, node), p)
   } :
   k0 == "name" && k1 == "=" ? {
     node, p := parse_expr(toks, pos + 2); (("store", ttext(toks, pos), node), p)
@@ -429,6 +445,7 @@ tup_ll := (fields: [str]) -> str {
 }
 
 tup_field := (t: str, i: int) -> str { t.1[i] }
+elemtype := (t: str) -> str { t.1 }                  // ("lst", elem) -> elem
 
 // the zero / () value of a type, for store into a freshly-allocated slot.
 zerov := (t: str) -> str { t == "i64" ? "0" : "zeroinitializer" }
@@ -488,6 +505,29 @@ gen_elems := (elems: [(str, str)], env: [(str, str)], c0: int) -> (str, [str], [
   (ir, ops, tys, c)
 }
 
+// the first-success ("find") tail shared by range and list `@`: given the loop
+// `head` (ending in the body + its present-flag), the `step` that advances and
+// re-loops, and the arm's payload (bop : bty), stop at the first present result
+// and carry (payload, flag) out. -> (ir, value, flag, type, counter).
+gen_find := (head: str, step: str, L: str, bop: str, bflag: str, bty: str, c: int) -> (str, str, str, str, int) {
+  rty := lltype(bty)
+  z   := zerov(bty)
+  vp := "%fp" + L
+  fp := "%ff" + L
+  v  := "%fv" + L
+  f  := "%fg" + L
+  loop := "  " + vp + " = alloca " + rty + "\n  store " + rty + " " + z + ", ptr " + vp + "\n" +
+    "  " + fp + " = alloca i1\n  store i1 false, ptr " + fp + "\n" +
+    head +
+    "  br i1 " + bflag + ", label %hit" + L + ", label %cont" + L + "\n" +
+    "hit" + L + ":\n  store " + rty + " " + bop + ", ptr " + vp +
+      "\n  store i1 true, ptr " + fp + "\n  br label %le" + L + "\n" +
+    "cont" + L + ":\n" + step +
+    "le" + L + ":\n  " + v + " = load " + rty + ", ptr " + vp +
+      "\n  " + f + " = load i1, ptr " + fp + "\n"
+  (loop, v, f, bty, c)
+}
+
 // gen_expr -> (instructions, value-operand, i1 present-flag, type, next-counter).
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
@@ -529,6 +569,41 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     })
     (body, acc, "true", tty, cc)
   } :
+  node.0 == "list" ? {                                 // [e0, e1, ...] -> fat {len, ptr}
+    node.1.len == 0 ? {                                // empty: {0, null}
+      r0 := `%t{c}`
+      r1 := `%t{c + 1}`
+      ("  " + r0 + " = insertvalue {i64, ptr} undef, i64 0, 0\n" +
+       "  " + r1 + " = insertvalue {i64, ptr} " + r0 + ", ptr null, 1\n",
+       r1, "true", ("lst", "i64"), c + 2)
+    } :
+    {
+      eir, ops, tys, c1 := gen_elems(node.1, env, c)
+      et  := tys[0]
+      etl := lltype(et)
+      n   := `{node.1.len}`
+      endp := `%t{c1}`
+      bytes := `%t{c1 + 1}`
+      base := `%t{c1 + 2}`
+      body: &str := eir +
+        "  " + endp + " = getelementptr " + etl + ", ptr null, i64 " + n + "\n" +
+        "  " + bytes + " = ptrtoint ptr " + endp + " to i64\n" +
+        "  " + base + " = call ptr @__alloc(i64 " + bytes + ")\n"
+      cc: &int := c1 + 3
+      ops @ (i: op => {
+        ep := `%t{cc}`
+        body = body + "  " + ep + " = getelementptr " + etl + ", ptr " + base + ", i64 " + `{i}` + "\n" +
+          "  store " + etl + " " + op + ", ptr " + ep + "\n"
+        cc = cc + 1
+        ()
+      })
+      v0 := `%t{cc}`
+      v1 := `%t{cc + 1}`
+      body = body + "  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + n + ", 0\n" +
+        "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + base + ", 1\n"
+      (body, v1, "true", ("lst", et), cc + 2)
+    }
+  } :
   node.0 == "member" ? {
     oir, ov, of, ot, c1 := gen_expr(node.1, env, c)
     reg := `%t{c1}`
@@ -555,7 +630,18 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
        "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + elt + ", 1\n",
        v1, "true", "str", c2 + 4)
     } :
-    ("", "0", "true", "i64", c2)                        // list index -> C7e
+    {                                                  // xs[i] -> element via typed gep
+      et  := elemtype(ot)
+      etl := lltype(et)
+      bp  := `%t{c2}`
+      ep  := `%t{c2 + 1}`
+      elt := `%t{c2 + 2}`
+      (oir + iir +
+       "  " + bp + " = extractvalue {i64, ptr} " + ov + ", 1\n" +
+       "  " + ep + " = getelementptr " + etl + ", ptr " + bp + ", i64 " + iv + "\n" +
+       "  " + elt + " = load " + etl + ", ptr " + ep + "\n",
+       elt, "true", et, c2 + 3)
+    }
   } :
   node.0 == "call" ? {
     air, ops, c2 := gen_args(node.2, env, c)
@@ -630,7 +716,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       hir, hiv, hf, ht, c2 := gen_expr(src.2, env, c1)
       L  := `{c2}`
       iv := `%iv{c2}`
-      bir, be, c3, bop, bflag := gen_stmt(arm.2, env + [(arm.1, iv, "i64")], c2 + 1)
+      bir, be, c3, bop, bflag, bty := gen_stmt(arm.2, env + [(arm.1, iv, "i64")], c2 + 1)
       head := lir + hir +
         "  " + iv + " = alloca i64\n  store i64 " + lov + ", ptr " + iv + "\n" +
         "  br label %lc" + L + "\n" +
@@ -641,26 +727,39 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       step := "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
         "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n"
       bflag == "false" ? {
-        // reduce: the arm never yields present, so count the range to the end.
         (head + step + "le" + L + ":\n", "0", "false", "i64", c3)
       } :
-      {
-        // find: stop at the first present arm result, carrying it out.
-        vp := `%fp{c2}`
-        fp := `%ff{c2}`
-        v  := `%fv{c2}`
-        f  := `%fg{c2}`
-        loop := "  " + vp + " = alloca i64\n  store i64 0, ptr " + vp + "\n" +
-          "  " + fp + " = alloca i1\n  store i1 false, ptr " + fp + "\n" +
-          head +
-          "  br i1 " + bflag + ", label %hit" + L + ", label %cont" + L + "\n" +
-          "hit" + L + ":\n  store i64 " + bop + ", ptr " + vp +
-            "\n  store i1 true, ptr " + fp + "\n  br label %le" + L + "\n" +
-          "cont" + L + ":\n" + step +
-          "le" + L + ":\n  " + v + " = load i64, ptr " + vp +
-            "\n  " + f + " = load i1, ptr " + fp + "\n"
-        (loop, v, f, "i64", c3)
-      }
+      gen_find(head, step, L, bop, bflag, bty, c3)
+    } :
+    arm.0 == "arm" ? {                                   // src is a list expression
+      sir, sv, sf, st, c1 := gen_expr(src, env, c)
+      et  := elemtype(st)
+      etl := lltype(et)
+      L  := `{c1}`
+      lp := `%lp{c1}`
+      ln := `%ln{c1}`
+      iv := `%iv{c1}`
+      es := `%es{c1}`
+      bir, be, c3, bop, bflag, bty := gen_stmt(arm.2, env + [(arm.1, es, et)], c1 + 1)
+      head := sir +
+        "  " + ln + " = extractvalue {i64, ptr} " + sv + ", 0\n" +
+        "  " + lp + " = extractvalue {i64, ptr} " + sv + ", 1\n" +
+        "  " + iv + " = alloca i64\n  store i64 0, ptr " + iv + "\n" +
+        "  " + es + " = alloca " + etl + "\n" +
+        "  br label %lc" + L + "\n" +
+        "lc" + L + ":\n  %ic" + L + " = load i64, ptr " + iv + "\n" +
+        "  %cm" + L + " = icmp slt i64 %ic" + L + ", " + ln + "\n" +
+        "  br i1 %cm" + L + ", label %lb" + L + ", label %le" + L + "\n" +
+        "lb" + L + ":\n" +
+        "  %ep" + L + " = getelementptr " + etl + ", ptr " + lp + ", i64 %ic" + L + "\n" +
+        "  %ev" + L + " = load " + etl + ", ptr %ep" + L + "\n" +
+        "  store " + etl + " %ev" + L + ", ptr " + es + "\n" + bir
+      step := "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
+        "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n"
+      bflag == "false" ? {
+        (head + step + "le" + L + ":\n", "0", "false", "i64", c3)
+      } :
+      gen_find(head, step, L, bop, bflag, bty, c3)
     } :
     ("", "0", "false", "i64", c)
   } :
@@ -691,6 +790,31 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "  " + rv1 + " = insertvalue {i64, ptr} " + rv0 + ", ptr " + np + ", 1\n"
       (instr, rv1, "true", "str", c2 + 9)
     } :
+    lt != "i64" && lt != "str" && node.1 == "+" ? {     // list append: xs + ys
+      et  := elemtype(lt)
+      etl := lltype(et)
+      instr := la + ra +
+        "  %t" + `{c2}` + " = extractvalue {i64, ptr} " + lv + ", 0\n" +
+        "  %t" + `{c2 + 1}` + " = extractvalue {i64, ptr} " + lv + ", 1\n" +
+        "  %t" + `{c2 + 2}` + " = extractvalue {i64, ptr} " + rv + ", 0\n" +
+        "  %t" + `{c2 + 3}` + " = extractvalue {i64, ptr} " + rv + ", 1\n" +
+        "  %t" + `{c2 + 4}` + " = add i64 %t" + `{c2}` + ", %t" + `{c2 + 2}` + "\n" +
+        "  %t" + `{c2 + 5}` + " = getelementptr " + etl + ", ptr null, i64 %t" + `{c2 + 4}` + "\n" +
+        "  %t" + `{c2 + 6}` + " = ptrtoint ptr %t" + `{c2 + 5}` + " to i64\n" +
+        "  %t" + `{c2 + 7}` + " = call ptr @__alloc(i64 %t" + `{c2 + 6}` + ")\n" +
+        "  %t" + `{c2 + 8}` + " = getelementptr " + etl + ", ptr null, i64 %t" + `{c2}` + "\n" +
+        "  %t" + `{c2 + 9}` + " = ptrtoint ptr %t" + `{c2 + 8}` + " to i64\n" +
+        "  call void @llvm.memcpy.p0.p0.i64(ptr %t" + `{c2 + 7}` + ", ptr %t" + `{c2 + 1}` +
+          ", i64 %t" + `{c2 + 9}` + ", i1 false)\n" +
+        "  %t" + `{c2 + 10}` + " = getelementptr " + etl + ", ptr %t" + `{c2 + 7}` + ", i64 %t" + `{c2}` + "\n" +
+        "  %t" + `{c2 + 11}` + " = getelementptr " + etl + ", ptr null, i64 %t" + `{c2 + 2}` + "\n" +
+        "  %t" + `{c2 + 12}` + " = ptrtoint ptr %t" + `{c2 + 11}` + " to i64\n" +
+        "  call void @llvm.memcpy.p0.p0.i64(ptr %t" + `{c2 + 10}` + ", ptr %t" + `{c2 + 3}` +
+          ", i64 %t" + `{c2 + 12}` + ", i1 false)\n" +
+        "  %t" + `{c2 + 13}` + " = insertvalue {i64, ptr} undef, i64 %t" + `{c2 + 4}` + ", 0\n" +
+        "  %t" + `{c2 + 14}` + " = insertvalue {i64, ptr} %t" + `{c2 + 13}` + ", ptr %t" + `{c2 + 7}` + ", 1\n"
+      (instr, "%t" + `{c2 + 14}`, "true", lt, c2 + 15)
+    } :
     {
       reg := `%t{c2}`
       instr := la + ra + "  " + reg + " = " + llop(node.1) + " i64 " + lv + ", " + rv + "\n"
@@ -699,16 +823,25 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   }
 }
 
-// gen one statement -> (instructions, env', counter', value-operand or "", flag).
-// Stores/intros yield (), so their value-operand is "" and their flag "false";
-// a bare final expression carries its own value and present-flag through.
-gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str) {
+// gen one statement -> (instructions, env', counter', value-op or "", flag, type).
+// Stores/intros yield (), so their value-op is "" / flag "false"; a bare final
+// expression carries its value, present-flag, AND type through (so `@` find can
+// type its result slot).
+gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str, str) {
   s.0 == "let" ? {
     i2, op, of, ot, c2 := gen_expr(s.2, env, c)
     rty := lltype(ot)
     slot := `%s{c2}`
     (i2 + "  " + slot + " = alloca " + rty + "\n  store " + rty + " " + op + ", ptr " + slot + "\n",
-     env + [(s.1, slot, ot)], c2 + 1, "", "false")
+     env + [(s.1, slot, ot)], c2 + 1, "", "false", "i64")
+  } :
+  s.0 == "letty" ? {                                    // name: Type := expr (annotated)
+    aty := s.2                                          // the declared type
+    rty := lltype(aty)
+    i2, op, of, ot, c2 := gen_expr(s.3, env, c)
+    slot := `%s{c2}`
+    (i2 + "  " + slot + " = alloca " + rty + "\n  store " + rty + " " + op + ", ptr " + slot + "\n",
+     env + [(s.1, slot, aty)], c2 + 1, "", "false", "i64")
   } :
   s.0 == "destruct" ? {                                 // a, b, ... := tuple-expr
     ri, ro, rf, rt, c2 := gen_expr(s.2, env, c)
@@ -726,21 +859,21 @@ gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], in
       cc = cc + 2
       ()
     })
-    (ir, e2, cc, "", "false")
+    (ir, e2, cc, "", "false", "i64")
   } :
   s.0 == "store" ? {
     i2, op, of, ot, c2 := gen_expr(s.2, env, c)
     rty := lltype(lookup_type(env, s.1))
-    (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false")
+    (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false", "i64")
   } :
   s.0 == "inplace" ? {
     // x op= e  is  x = x op e; reuse gen_expr's typed binary by rewriting it.
     expanded := ("bin", iop(s.2), ("name", s.1), s.3)
     i2, op, of, ot, c2 := gen_expr(expanded, env, c)
     rty := lltype(lookup_type(env, s.1))
-    (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false")
+    (i2 + "  store " + rty + " " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "", "false", "i64")
   } :
-  { i2, op, of, ot, c2 := gen_expr(s.1, env, c); (i2, env, c2, op, of) }
+  { i2, op, of, ot, c2 := gen_expr(s.1, env, c); (i2, env, c2, op, of, ot) }
 }
 
 gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> str {
@@ -749,7 +882,7 @@ gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> st
   c:   &int := c0
   ret: &str := retll == "i64" ? "0" : "zeroinitializer"
   stmts @ (s => {
-    si, e2, c2, op, of := gen_stmt(s, env, c)
+    si, e2, c2, op, of, ot := gen_stmt(s, env, c)
     ir = ir + si
     env = e2
     c = c2
