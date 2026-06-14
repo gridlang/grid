@@ -4,35 +4,142 @@
 //
 // Emits LLVM IR text; `clang out.ll -o bin` links a native binary.
 //
-// C1 (this rung): compile `main := () -> int { <int-literal> }` to a native that
-// exits with that int. The front end here is deliberately crude (string slicing);
-// C2/C3/C4 replace it with a real lexer / parser / codegen.
+// Rungs so far:
+//   C1  literal-int main
+//   C2  lexer        — whitespace/comments, int, name, operators
+//   C3  parser/AST   — integer arithmetic with precedence + parens
+//   C4  codegen      — LLVM IR for `main := () -> int { <arith> }`
+//
+// Note: `?:` ladders put the `:` at the END of a line (a newline after `:`
+// continues; a newline after `}` would end the statement).
 module main
 
 import fs
 import str
 import sys
 
-// --- codegen : wrap an i64 return value as a complete module ----------
-// LLVM IR is brace-heavy, so build it with plain "..." concatenation (a backtick
-// string would read `{` as an interpolation delimiter).
-emit_main := (ret: str) -> str {
+// ── lexer ────────────────────────────────────────────────────────────
+// a token is (kind, text); operators are self-kinded, literals carry a tag.
+
+digit := (c: str) -> str { c >= "0" && c <= "9" }
+alpha := (c: str) -> str { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" }
+space := (c: str) -> str { c == " " || c == "\t" || c == "\r" || c == "\n" }
+
+// scan a run of chars matching p, returning (text, end-index).
+scan := (src: str, start: int, n: int, p: (str) -> str) -> (str, int) {
+  text: &str := ""
+  j: &int := start
+  { j < n && p(src[j]) } @ { text = text + src[j]; j += 1; () }
+  (text, j)
+}
+
+lex := (src: str) -> [(str, str)] {
+  toks: &[(str, str)] := []
+  i: &int := 0
+  n := src.len
+  { i < n } @ {
+    c := src[i]
+    space(c) ? { i += 1 } :
+    digit(c) ? { t, j := scan(src, i, n, digit); toks = toks + [("int", t)]; i = j } :
+    alpha(c) ? { t, j := scan(src, i, n, alpha); toks = toks + [("name", t)]; i = j } :
+    {
+      two := i + 1 < n ? src[i] + src[i + 1] : ""
+      two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
+      (two == ":=" || two == "->" || two == "=>") ? { toks = toks + [(two, two)]; i += 2 } :
+      { toks = toks + [(c, c)]; i += 1 }
+    }
+    ()
+  }
+  toks
+}
+
+// ── parser ───────────────────────────────────────────────────────────
+// AST nodes are tuples tagged by their first element:
+//   ("int", "42")            integer literal
+//   ("bin", "+", lhs, rhs)   binary op
+
+tkind := (toks: [(str, str)], pos: int) -> str { pos < toks.len ? toks[pos].0 : "eof" }
+ttext := (toks: [(str, str)], pos: int) -> str { toks[pos].1 }
+
+mulop := (k: str) -> str { k == "*" || k == "/" || k == "%" }
+addop := (k: str) -> str { k == "+" || k == "-" }
+
+parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  k := tkind(toks, pos)
+  k == "int" ? (("int", ttext(toks, pos)), pos + 1) :
+  k == "(" ? { node, p := parse_expr(toks, pos + 1); (node, p + 1) } :
+  (("int", "0"), pos + 1)
+}
+
+parse_mul := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  node, p := parse_atom(toks, pos)
+  acc: &(str, str) := node
+  cur: &int := p
+  { mulop(tkind(toks, cur)) } @ {
+    op := ttext(toks, cur)
+    rhs, p2 := parse_atom(toks, cur + 1)
+    acc = ("bin", op, acc, rhs)
+    cur = p2
+    ()
+  }
+  (acc, cur)
+}
+
+parse_add := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  node, p := parse_mul(toks, pos)
+  acc: &(str, str) := node
+  cur: &int := p
+  { addop(tkind(toks, cur)) } @ {
+    op := ttext(toks, cur)
+    rhs, p2 := parse_mul(toks, cur + 1)
+    acc = ("bin", op, acc, rhs)
+    cur = p2
+    ()
+  }
+  (acc, cur)
+}
+
+parse_expr := (toks: [(str, str)], pos: int) -> ((str, str), int) { parse_add(toks, pos) }
+
+// the program is `main := () -> int { <expr> }`; find the `{` and parse the body.
+parse_program := (toks: [(str, str)]) -> (str, str) {
+  b: &int := 0
+  { tkind(toks, b) != "{" && b < toks.len } @ { b += 1; () }
+  node, p := parse_expr(toks, b + 1)
+  node
+}
+
+// ── codegen ──────────────────────────────────────────────────────────
+
+llop := (op: str) -> str {
+  op == "+" ? "add" : op == "-" ? "sub" : op == "*" ? "mul" : op == "/" ? "sdiv" : "srem"
+}
+
+// gen_expr -> (instructions, operand, next-temp-counter)  (counter threaded; no
+// module-level mutable, so this stays self-host-portable).
+gen_expr := (node: (str, str), c: int) -> (str, str, int) {
+  node.0 == "int" ? ("", node.1, c) :
+  {
+    la, lv, c1 := gen_expr(node.2, c)
+    ra, rv, c2 := gen_expr(node.3, c1)
+    reg := `%t{c2}`
+    instr := la + ra + "  " + reg + " = " + llop(node.1) + " i64 " + lv + ", " + rv + "\n"
+    (instr, reg, c2 + 1)
+  }
+}
+
+gen := (ast: (str, str)) -> str {
+  ir, val, c := gen_expr(ast, 0)
   "; gridc\n" +
   "define i64 @main() {\n" +
   "entry:\n" +
-  "  ret i64 " + ret + "\n" +
+  ir +
+  "  ret i64 " + val + "\n" +
   "}\n"
-}
-
-// --- C1 front end : pull the integer literal out of the main body -----
-compile := (src: str) -> str {
-  after := str.split(src, "{")[1]            // text after the first {
-  body  := str.trim(str.split(after, "}")[0]) // text before the next }  ->  "42"
-  emit_main(body)
 }
 
 main := (args: [str]) -> int {
   src := fs.read(args[0])
-  fs.write(args[1], compile(src))
+  fs.write(args[1], gen(parse_program(lex(src))))
   0
 }

@@ -46,7 +46,11 @@ def compile_exit(program, tmp):
 
 
 @clang
-@pytest.mark.parametrize("n", [0, 7, 42, 200])
-def test_int_main_matches_interpreter(n, tmp_path):
-    program = f"main := () -> int {{ {n} }}\n"
-    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == n
+@pytest.mark.parametrize("expr,val", [
+    ("0", 0), ("7", 7), ("42", 42), ("200", 200),
+    ("40 + 2", 42), ("6 * 7", 42), ("100 - 58", 42), ("84 / 2", 42), ("85 % 43", 42),
+    ("2 + 3 * 4", 14), ("(2 + 3) * 4", 20), ("(1 + 2) * 10 + 12", 42),
+])
+def test_arith_matches_interpreter(expr, val, tmp_path):
+    program = f"main := () -> int {{ {expr} }}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
