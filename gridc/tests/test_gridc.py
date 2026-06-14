@@ -195,3 +195,28 @@ def test_tuples_and_destructure(program, val, tmp_path):
 ])
 def test_typed_function_abi(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # string equality / inequality (length + bytes via __strcmp)
+    ('"abc" == "abc" ? 5 : 0', 5),
+    ('"abc" == "abd" ? 5 : 0', 0),
+    ('"ab" != "abc" ? 7 : 0', 7),
+    # lexicographic ordering
+    ('"a" < "b" ? 7 : 0', 7),
+    ('"abc" < "abd" ? 7 : 0', 7),
+    ('"b" >= "a" ? 7 : 0', 7),
+    ('"z" <= "a" ? 7 : 0', 0),
+    # && / || over relations (the lexer's char predicates)
+    ('c := "5"\n  c >= "0" && c <= "9" ? 1 : 0', 1),
+    ('c := "x"\n  c >= "0" && c <= "9" ? 1 : 0', 0),
+    ('c := "\\n"\n  (c == "\\n" || c == ";") ? 9 : 0', 9),
+    ('c := "a"\n  (c == "\\n" || c == ";") ? 9 : 0', 0),
+    # string indexing s[i] -> a 1-char string, compared
+    ('s := "hello"\n  s[1] == "e" ? 42 : 0', 42),
+    ('s := "abc"\n  s[0] == "a" && s[2] == "c" ? 8 : 0', 8),
+])
+def test_string_compare_and_index(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

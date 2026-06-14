@@ -63,7 +63,8 @@ lex := (src: str) -> [(str, str)] {
       two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
       (two == ":=" || two == "->" || two == "=>" || two == ".." ||
        two == "+=" || two == "-=" || two == "*=" || two == "/=" ||
-       two == "==" || two == "!=" || two == "<=" || two == ">=") ? {
+       two == "==" || two == "!=" || two == "<=" || two == ">=" ||
+       two == "&&" || two == "||") ? {
         toks = toks + [(two, two)]; i += 2
       } :
       { toks = toks + [(c, c)]; i += 1 }
@@ -84,6 +85,7 @@ ttext := (toks: [(str, str)], pos: int) -> str { toks[pos].1 }
 mulop := (k: str) -> str { k == "*" || k == "/" || k == "%" }
 addop := (k: str) -> str { k == "+" || k == "-" }
 cmpop := (k: str) -> str { k == "==" || k == "!=" || k == "<" || k == "<=" || k == ">" || k == ">=" }
+boolop := (k: str) -> str { k == "&&" || k == "||" }
 inplaceop := (k: str) -> str { k == "+=" || k == "-=" || k == "*=" || k == "/=" }
 
 parse_args := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
@@ -127,14 +129,21 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (("int", "0"), pos + 1)
 }
 
-// postfix chain: atom (. member)*  ->  ("member", obj, name)
+// postfix chain: atom ( .member | [index] )*
 parse_postfix := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   node, p := parse_atom(toks, pos)
   acc: &(str, str) := node
   cur: &int := p
-  { tkind(toks, cur) == "." } @ {
-    acc = ("member", acc, ttext(toks, cur + 1))
-    cur = cur + 2
+  { tkind(toks, cur) == "." || tkind(toks, cur) == "[" } @ {
+    tkind(toks, cur) == "." ? {
+      acc = ("member", acc, ttext(toks, cur + 1))
+      cur = cur + 2
+    } :
+    {
+      idx, p2 := parse_expr(toks, cur + 1)
+      acc = ("index", acc, idx)
+      cur = p2 + 1                                      // skip ]
+    }
     ()
   }
   (acc, cur)
@@ -186,9 +195,24 @@ parse_cmp := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (l, p)
 }
 
+// boolean selectors && / || , looser than comparison
+parse_bool := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  l, p := parse_cmp(toks, pos)
+  acc: &(str, str) := l
+  cur: &int := p
+  { boolop(tkind(toks, cur)) } @ {
+    op := ttext(toks, cur)
+    r, p2 := parse_cmp(toks, cur + 1)
+    acc = ("bin", op, acc, r)
+    cur = p2
+    ()
+  }
+  (acc, cur)
+}
+
 // the combinators: source @ body / source # body -> ("iter", op, source, body)
 parse_comb := (toks: [(str, str)], pos: int) -> ((str, str), int) {
-  l, p := parse_cmp(toks, pos)
+  l, p := parse_bool(toks, pos)
   acc: &(str, str) := l
   cur: &int := p
   { tkind(toks, cur) == "@" || tkind(toks, cur) == "#" } @ {
@@ -365,7 +389,8 @@ parse_program := (toks: [(str, str)]) -> [(str, str)] {
 
 // ── codegen ──────────────────────────────────────────────────────────
 llop := (op: str) -> str {
-  op == "+" ? "add" : op == "-" ? "sub" : op == "*" ? "mul" : op == "/" ? "sdiv" : "srem"
+  op == "+" ? "add" : op == "-" ? "sub" : op == "*" ? "mul" : op == "/" ? "sdiv" :
+  op == "&&" ? "and" : op == "||" ? "or" : "srem"
 }
 iop := (k: str) -> str { k == "+=" ? "+" : k == "-=" ? "-" : k == "*=" ? "*" : "/" }
 relpred := (op: str) -> str {
@@ -414,11 +439,21 @@ gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
   node.0 == "rel" ? {
     la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
     ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
-    tag := `%t{c2}`
-    (la + ra + "  " + tag + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n",
-     tag, c2 + 1)
+    lt == "str" ? {                                    // compare via __strcmp
+      sc := `%t{c2}`
+      tag := `%t{c2 + 1}`
+      (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
+       "  " + tag + " = icmp " + relpred(node.1) + " i64 " + sc + ", 0\n", tag, c2 + 2)
+    } :
+    {
+      tag := `%t{c2}`
+      (la + ra + "  " + tag + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n",
+       tag, c2 + 1)
+    }
   } :
-  { e, v, vf, vt, c1 := gen_expr(node, env, c); (e, "true", c1) }
+  { e, v, vf, vt, c1 := gen_expr(node, env, c)         // any other value: truthy test
+    tag := `%t{c1}`
+    (e + "  " + tag + " = icmp ne i64 " + v + ", 0\n", tag, c1 + 1) }
 }
 
 // gen each call argument, returning (instructions, "i64 a, i64 b", counter).
@@ -505,6 +540,23 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
          reg, "true", fty, c1 + 1)
       }
   } :
+  node.0 == "index" ? {                                 // obj[i]
+    oir, ov, of, ot, c1 := gen_expr(node.1, env, c)
+    iir, iv, iff, it, c2 := gen_expr(node.2, env, c1)
+    ot == "str" ? {                                     // s[i] -> shared 1-char str
+      bp := `%t{c2}`
+      elt := `%t{c2 + 1}`
+      v0 := `%t{c2 + 2}`
+      v1 := `%t{c2 + 3}`
+      (oir + iir +
+       "  " + bp + " = extractvalue {i64, ptr} " + ov + ", 1\n" +
+       "  " + elt + " = getelementptr i8, ptr " + bp + ", i64 " + iv + "\n" +
+       "  " + v0 + " = insertvalue {i64, ptr} undef, i64 1, 0\n" +
+       "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + elt + ", 1\n",
+       v1, "true", "str", c2 + 4)
+    } :
+    ("", "0", "true", "i64", c2)                        // list index -> C7e
+  } :
   node.0 == "call" ? {
     air, ops, c2 := gen_args(node.2, env, c)
     rt := (lookup_type(env, node.1)).1                 // ("fn", rettype) -> rettype
@@ -553,10 +605,20 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   node.0 == "rel" ? {                                  // relation as a value -> 0/1
     la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
     ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
-    cmp := `%t{c2}`
-    reg := `%t{c2 + 1}`
-    (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
-     "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, "true", "i64", c2 + 2)
+    lt == "str" ? {
+      sc := `%t{c2}`
+      cmp := `%t{c2 + 1}`
+      reg := `%t{c2 + 2}`
+      (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
+       "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + sc + ", 0\n" +
+       "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, "true", "i64", c2 + 3)
+    } :
+    {
+      cmp := `%t{c2}`
+      reg := `%t{c2 + 1}`
+      (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
+       "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, "true", "i64", c2 + 2)
+    }
   } :
   node.0 == "iter" ? {                                 // src @|# (name => body)
     src := node.2
@@ -733,7 +795,22 @@ preamble := () -> str {
   "  %a = add i64 %n, 7\n  %r = and i64 %a, -8\n" +
   "  %h = load i64, ptr @hp\n" +
   "  %p = getelementptr [16777216 x i8], ptr @arena, i64 0, i64 %h\n" +
-  "  %h2 = add i64 %h, %r\n  store i64 %h2, ptr @hp\n  ret ptr %p\n}\n"
+  "  %h2 = add i64 %h, %r\n  store i64 %h2, ptr @hp\n  ret ptr %p\n}\n" +
+  // lexicographic compare of two fat strings -> negative / 0 / positive
+  "define i64 @__strcmp({i64, ptr} %a, {i64, ptr} %b) {\n" +
+  "entry:\n" +
+  "  %alen = extractvalue {i64, ptr} %a, 0\n  %aptr = extractvalue {i64, ptr} %a, 1\n" +
+  "  %blen = extractvalue {i64, ptr} %b, 0\n  %bptr = extractvalue {i64, ptr} %b, 1\n" +
+  "  %alt = icmp slt i64 %alen, %blen\n  %min = select i1 %alt, i64 %alen, i64 %blen\n" +
+  "  %ip = alloca i64\n  store i64 0, ptr %ip\n  br label %loop\n" +
+  "loop:\n  %i = load i64, ptr %ip\n  %done = icmp sge i64 %i, %min\n" +
+  "  br i1 %done, label %bylen, label %body\n" +
+  "body:\n  %ap = getelementptr i8, ptr %aptr, i64 %i\n  %bp = getelementptr i8, ptr %bptr, i64 %i\n" +
+  "  %ac = load i8, ptr %ap\n  %bc = load i8, ptr %bp\n  %ne = icmp ne i8 %ac, %bc\n" +
+  "  br i1 %ne, label %diff, label %cont\n" +
+  "cont:\n  %i2 = add i64 %i, 1\n  store i64 %i2, ptr %ip\n  br label %loop\n" +
+  "diff:\n  %az = zext i8 %ac to i64\n  %bz = zext i8 %bc to i64\n  %d = sub i64 %az, %bz\n  ret i64 %d\n" +
+  "bylen:\n  %ld = sub i64 %alen, %blen\n  ret i64 %ld\n}\n"
 }
 
 gen := (fns: [(str, str)]) -> str {
