@@ -328,3 +328,19 @@ def test_function_values(program, val, tmp_path):
 def test_while_loops(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # backtick interpolation: ints formatted to decimal and concatenated
+    ('`{42}`.len', 2),                                  # "42"
+    ('c := 7\n  s := `x{c}`\n  s.len', 2),              # "x7"
+    ('c := 5\n  `{c}{c}`.len', 2),                      # "55"
+    ('n := 100\n  `v{n}`.len', 4),                      # "v100"
+    ('c := 5\n  `t{c + 1}`.len', 2),                    # "t6"
+    ('c := 5\n  `t{c}` == "t5" ? 1 : 0', 1),            # interpolation == literal
+    ('c := 9\n  s := `%t{c}` + "x"\n  s.len', 4),       # "%t9x" — the SSA-name idiom
+])
+def test_backtick_interpolation(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

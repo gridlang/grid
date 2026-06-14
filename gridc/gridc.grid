@@ -47,6 +47,14 @@ scan_str := (src: str, start: int, n: int) -> (str, int) {
   (text, j + 1)
 }
 
+// read a `backtick` string's raw content (interpolations left intact) to the close.
+scan_bq := (src: str, start: int, n: int) -> (str, int) {
+  text: &str := ""
+  j: &int := start
+  { j < n && src[j] != "`" } @ { text = text + src[j]; j += 1; () }
+  (text, j + 1)
+}
+
 lex := (src: str) -> [(str, str)] {
   toks: &[(str, str)] := []
   i: &int := 0
@@ -58,6 +66,7 @@ lex := (src: str) -> [(str, str)] {
     digit(c) ? { t, j := scan(src, i, n, digit); toks = toks + [("int", t)]; i = j } :
     alpha(c) ? { t, j := scan(src, i, n, alpha); toks = toks + [("name", t)]; i = j } :
     c == "\"" ? { t, j := scan_str(src, i + 1, n); toks = toks + [("str", t)]; i = j } :
+    c == "`" ? { t, j := scan_bq(src, i + 1, n); toks = toks + [("bq", t)]; i = j } :
     {
       two := i + 1 < n ? src[i] + src[i + 1] : ""
       two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
@@ -100,10 +109,42 @@ parse_args := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
   (args, cur + 1)
 }
 
+// a `backtick` interpolation -> a + -tree of ("str", lit) parts and __itoa(expr)
+// calls, so codegen reuses string concat and the call path (no new node kind).
+parse_interp := (raw: str) -> (str, str) {
+  parts: &[(str, str)] := []
+  lit:   &str := ""
+  i:     &int := 0
+  n := raw.len
+  { i < n } @ {
+    raw[i] == "{" ? {
+      lit.len > 0 ? { parts = parts + [("str", lit)] }
+      lit = ""
+      e: &str := ""
+      i += 1
+      { i < n && raw[i] != "}" } @ { e = e + raw[i]; i += 1; () }
+      i += 1
+      enode, ep := parse_expr(lex(e), 0)
+      parts = parts + [("call", "__itoa", [enode])]
+    } :
+    { lit = lit + raw[i]; i += 1 }
+    ()
+  }
+  lit.len > 0 ? { parts = parts + [("str", lit)] }
+  parts.len == 0 ? ("str", "") :
+  {
+    acc: &(str, str) := parts[0]
+    k:   &int := 1
+    { k < parts.len } @ { acc = ("bin", "+", acc, parts[k]); k += 1; () }
+    acc
+  }
+}
+
 parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   k := tkind(toks, pos)
   k == "int" ? (("int", ttext(toks, pos)), pos + 1) :
   k == "str" ? (("str", ttext(toks, pos)), pos + 1) :
+  k == "bq"  ? (parse_interp(ttext(toks, pos)), pos + 1) :
   k == "name" ? {
     tkind(toks, pos + 1) == "(" ? {
       args, p := parse_args(toks, pos + 2)
@@ -1076,11 +1117,31 @@ preamble := () -> str {
   "  br i1 %ne, label %diff, label %cont\n" +
   "cont:\n  %i2 = add i64 %i, 1\n  store i64 %i2, ptr %ip\n  br label %loop\n" +
   "diff:\n  %az = zext i8 %ac to i64\n  %bz = zext i8 %bc to i64\n  %d = sub i64 %az, %bz\n  ret i64 %d\n" +
-  "bylen:\n  %ld = sub i64 %alen, %blen\n  ret i64 %ld\n}\n"
+  "bylen:\n  %ld = sub i64 %alen, %blen\n  ret i64 %ld\n}\n" +
+  // format a non-negative i64 to a decimal fat string in the arena
+  "define {i64, ptr} @__itoa(i64 %n) {\n" +
+  "entry:\n  %z = icmp eq i64 %n, 0\n  br i1 %z, label %zero, label %count\n" +
+  "zero:\n  %zb = call ptr @__alloc(i64 1)\n  store i8 48, ptr %zb\n" +
+  "  %zv0 = insertvalue {i64, ptr} undef, i64 1, 0\n  %zv1 = insertvalue {i64, ptr} %zv0, ptr %zb, 1\n" +
+  "  ret {i64, ptr} %zv1\n" +
+  "count:\n  %lp = alloca i64\n  store i64 %n, ptr %lp\n  %cp = alloca i64\n  store i64 0, ptr %cp\n" +
+  "  br label %cl\n" +
+  "cl:\n  %lv = load i64, ptr %lp\n  %more = icmp sgt i64 %lv, 0\n  br i1 %more, label %cb, label %cd\n" +
+  "cb:\n  %lv2 = sdiv i64 %lv, 10\n  store i64 %lv2, ptr %lp\n" +
+  "  %cv = load i64, ptr %cp\n  %cv2 = add i64 %cv, 1\n  store i64 %cv2, ptr %cp\n  br label %cl\n" +
+  "cd:\n  %nd = load i64, ptr %cp\n  %buf = call ptr @__alloc(i64 %nd)\n" +
+  "  store i64 %n, ptr %lp\n  %ip = alloca i64\n  %im1 = sub i64 %nd, 1\n  store i64 %im1, ptr %ip\n" +
+  "  br label %fl\n" +
+  "fl:\n  %iv = load i64, ptr %ip\n  %ok = icmp sge i64 %iv, 0\n  br i1 %ok, label %fb, label %fd\n" +
+  "fb:\n  %rem = load i64, ptr %lp\n  %dd = srem i64 %rem, 10\n  %rem2 = sdiv i64 %rem, 10\n  store i64 %rem2, ptr %lp\n" +
+  "  %dc = add i64 %dd, 48\n  %dc8 = trunc i64 %dc to i8\n  %dst = getelementptr i8, ptr %buf, i64 %iv\n  store i8 %dc8, ptr %dst\n" +
+  "  %iv2 = sub i64 %iv, 1\n  store i64 %iv2, ptr %ip\n  br label %fl\n" +
+  "fd:\n  %rv0 = insertvalue {i64, ptr} undef, i64 %nd, 0\n  %rv1 = insertvalue {i64, ptr} %rv0, ptr %buf, 1\n" +
+  "  ret {i64, ptr} %rv1\n}\n"
 }
 
 gen := (fns: [(str, str)]) -> str {
-  ftab: &[(str, str)] := []                            // name -> (@name, ("fn", rettype))
+  ftab: &[(str, str)] := [("__itoa", "@__itoa", ("fn", "str"))]   // runtime helper
   fns @ (f => { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))]; () })
   out: &str := preamble()
   fns @ (f => { out = out + gen_fn(f, ftab); () })
