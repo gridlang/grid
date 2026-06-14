@@ -43,7 +43,7 @@ lex := (src: str) -> [(str, str)] {
     {
       two := i + 1 < n ? src[i] + src[i + 1] : ""
       two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
-      (two == ":=" || two == "->" || two == "=>" ||
+      (two == ":=" || two == "->" || two == "=>" || two == ".." ||
        two == "+=" || two == "-=" || two == "*=" || two == "/=" ||
        two == "==" || two == "!=" || two == "<=" || two == ">=") ? {
         toks = toks + [(two, two)]; i += 2
@@ -122,19 +122,50 @@ parse_add := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (acc, cur)
 }
 
-// a single relation (no chaining yet): ("rel", op, l, r)
-parse_cmp := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// range: a .. b  ->  ("range", a, b)
+parse_range := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   l, p := parse_add(toks, pos)
-  cmpop(tkind(toks, p)) ? {
-    r, p2 := parse_add(toks, p + 1)
-    (("rel", ttext(toks, p), l, r), p2)
+  tkind(toks, p) == ".." ? {
+    r, p2 := parse_add(toks, p + 1); (("range", l, r), p2)
   } :
   (l, p)
 }
 
+// a single relation (no chaining yet): ("rel", op, l, r)
+parse_cmp := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  l, p := parse_range(toks, pos)
+  cmpop(tkind(toks, p)) ? {
+    r, p2 := parse_range(toks, p + 1); (("rel", ttext(toks, p), l, r), p2)
+  } :
+  (l, p)
+}
+
+// the combinators: source @ body / source # body -> ("iter", op, source, body)
+parse_comb := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  l, p := parse_cmp(toks, pos)
+  acc: &(str, str) := l
+  cur: &int := p
+  { tkind(toks, cur) == "@" || tkind(toks, cur) == "#" } @ {
+    op := ttext(toks, cur)
+    body, p2 := parse_armbody(toks, cur + 1)
+    acc = ("iter", op, acc, body)
+    cur = p2
+    ()
+  }
+  (acc, cur)
+}
+
+// a combinator body: ( name => stmt ) -> ("arm", name, stmt) ; else ( expr )
+parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  tkind(toks, pos) == "(" && tkind(toks, pos + 1) == "name" && tkind(toks, pos + 2) == "=>" ? {
+    s, p := parse_stmt(toks, pos + 3); (("arm", ttext(toks, pos + 1), s), p + 1)
+  } :
+  { node, p := parse_expr(toks, pos + 1); (node, p + 1) }
+}
+
 // cond ? then : else  ->  ("if", cond, then, else)   (loosest, right-assoc)
 parse_ternary := (toks: [(str, str)], pos: int) -> ((str, str), int) {
-  cond, p := parse_cmp(toks, pos)
+  cond, p := parse_comb(toks, pos)
   tkind(toks, p) == "?" ? {
     then, p2 := parse_expr(toks, p + 1)
     els, p3 := parse_expr(toks, p2 + 1)
@@ -298,6 +329,31 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
     (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
      "  " + reg + " = zext i1 " + cmp + " to i64\n", reg, c2 + 2)
   } :
+  node.0 == "iter" ? {                                 // src @|# (name => body)
+    src := node.2
+    arm := node.3
+    src.0 == "range" && arm.0 == "arm" ? {
+      // a `..` range counts the element from lo to hi inclusive; the arm's
+      // bound name IS the counter slot, so the body reads it like any local.
+      lir, lov, c1 := gen_expr(src.1, env, c)
+      hir, hiv, c2 := gen_expr(src.2, env, c1)
+      L  := `{c2}`
+      iv := `%iv{c2}`
+      bir, be, c3, bop := gen_stmt(arm.2, env + [(arm.1, iv)], c2 + 1)
+      body := lir + hir +
+        "  " + iv + " = alloca i64\n  store i64 " + lov + ", ptr " + iv + "\n" +
+        "  br label %lc" + L + "\n" +
+        "lc" + L + ":\n  %ic" + L + " = load i64, ptr " + iv + "\n" +
+        "  %cm" + L + " = icmp sle i64 %ic" + L + ", " + hiv + "\n" +
+        "  br i1 %cm" + L + ", label %lb" + L + ", label %le" + L + "\n" +
+        "lb" + L + ":\n" + bir +
+        "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
+        "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n" +
+        "le" + L + ":\n"
+      (body, "0", c3)
+    } :
+    ("", "0", c)
+  } :
   {
     la, lv, c1 := gen_expr(node.2, env, c)
     ra, rv, c2 := gen_expr(node.3, env, c1)
@@ -307,41 +363,41 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
   }
 }
 
+// gen one statement -> (instructions, env', counter', result-operand or "")
+gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], int, str) {
+  s.0 == "let" ? {
+    i2, op, c2 := gen_expr(s.2, env, c)
+    slot := `%s{c2}`
+    (i2 + "  " + slot + " = alloca i64\n  store i64 " + op + ", ptr " + slot + "\n",
+     env + [(s.1, slot)], c2 + 1, "")
+  } :
+  s.0 == "store" ? {
+    i2, op, c2 := gen_expr(s.2, env, c)
+    (i2 + "  store i64 " + op + ", ptr " + lookup(env, s.1) + "\n", env, c2, "")
+  } :
+  s.0 == "inplace" ? {
+    i2, op, c2 := gen_expr(s.3, env, c)
+    slot := lookup(env, s.1)
+    cur := `%t{c2}`
+    res := `%t{c2 + 1}`
+    (i2 + "  " + cur + " = load i64, ptr " + slot + "\n" +
+     "  " + res + " = " + llop(iop(s.2)) + " i64 " + cur + ", " + op + "\n" +
+     "  store i64 " + res + ", ptr " + slot + "\n", env, c2 + 2, "")
+  } :
+  { i2, op, c2 := gen_expr(s.1, env, c); (i2, env, c2, op) }
+}
+
 gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int) -> str {
   ir:  &str := ""
   env: &[(str, str)] := env0
   c:   &int := c0
   ret: &str := "0"
   stmts @ (s => {
-    s.0 == "let" ? {
-      i2, op, c2 := gen_expr(s.2, env, c)
-      slot := `%s{c2}`
-      ir = ir + i2 + "  " + slot + " = alloca i64\n  store i64 " + op + ", ptr " + slot + "\n"
-      env = env + [(s.1, slot)]
-      c = c2 + 1
-    } :
-    s.0 == "store" ? {
-      i2, op, c2 := gen_expr(s.2, env, c)
-      ir = ir + i2 + "  store i64 " + op + ", ptr " + lookup(env, s.1) + "\n"
-      c = c2
-    } :
-    s.0 == "inplace" ? {
-      i2, op, c2 := gen_expr(s.3, env, c)
-      slot := lookup(env, s.1)
-      cur := `%t{c2}`
-      res := `%t{c2 + 1}`
-      ir = ir + i2 +
-        "  " + cur + " = load i64, ptr " + slot + "\n" +
-        "  " + res + " = " + llop(iop(s.2)) + " i64 " + cur + ", " + op + "\n" +
-        "  store i64 " + res + ", ptr " + slot + "\n"
-      c = c2 + 2
-    } :
-    {
-      i2, op, c2 := gen_expr(s.1, env, c)
-      ir = ir + i2
-      ret = op
-      c = c2
-    }
+    si, e2, c2, op := gen_stmt(s, env, c)
+    ir = ir + si
+    env = e2
+    c = c2
+    op != "" ? { ret = op } : ()
     ()
   })
   ir + "  ret i64 " + ret + "\n"

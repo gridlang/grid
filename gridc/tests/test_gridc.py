@@ -85,3 +85,22 @@ def test_locals_match_interpreter(body, val, tmp_path):
 ])
 def test_functions_and_control(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # @ reduce over a range -> native counting loop
+    ("main := () -> int {\n  sum: &int := 0\n  1..5 @ (n => sum += n)\n  sum\n}", 15),
+    ("main := () -> int {\n  sum: &int := 0\n  1..10 @ (n => sum += n)\n  sum\n}", 55),
+    # product accumulator
+    ("main := () -> int {\n  p: &int := 1\n  1..5 @ (k => p *= k)\n  p\n}", 120),
+    # range bounds from locals
+    ("main := () -> int {\n  hi := 6\n  s: &int := 0\n  1..hi @ (i => s += i)\n  s\n}", 21),
+    # the loop body can do real arithmetic on the element
+    ("main := () -> int {\n  s: &int := 0\n  1..4 @ (n => s += n * n)\n  s\n}", 30),
+    # range counting into a function call inside the body
+    ("dbl := (x: int) -> int { x + x }\n"
+     "main := () -> int {\n  s: &int := 0\n  1..3 @ (n => s += dbl(n))\n  s\n}", 12),
+])
+def test_range_reduce_matches_interpreter(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
