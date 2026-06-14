@@ -1,122 +1,87 @@
-// The Grid flagship — a tiny HTTP server, written strictly against MODEL.md.
-//
-// Its job is to stress every layer at once and surface what is still
-// hand-wavy. Gaps it forced are catalogued at the bottom of this file.
-
+// The Grid flagship — a tiny HTTP server, written against the grid.md model.
+// Exercises every layer at once: := / =, the triad, =>-match, keyed iteration,
+// fallibles + !, ~ defer, structs, interpolation, and the keyless control flow.
 module main
 
 import net          // listen / accept / readline / read / write / close, and Conn
 import str          // words / lines / trim / join
 import sys          // print
 
-// --- types : a struct is a named tuple (Layer 4) ----------------------
+// --- types : a struct is a named tuple ---------------------------------
+Request  := (method: str, path: str, body: str)
+Response := (status: int, body: str)
 
-Request  = (method: str, path: str, body: str)
-Response = (status: int, body: str)
+// --- responses : plain functions ---------------------------------------
+ok   := (body: str)             -> Response { (status: 200, body: body) }
+fail := (status: int, msg: str) -> Response { (status: status, body: msg) }
 
-// --- responses : plain functions (Layer 5) ----------------------------
-
-ok   = (body: str)             -> Response { (status: 200, body: body) }
-fail = (status: int, msg: str) -> Response { (status: status, body: msg) }
-
-// --- handlers : `?` opens a block with its subject as the topic,
-//                `=>` matches the topic (Layer 3) -----------------------
-
-hello = (req: Request) -> Response {
-  name = req.body ? {
-    ""  => "world"          // the literal arm: body is exactly ""
-    raw => str.trim(raw)    // else bind the topic
+// --- handlers : `?` makes the subject the current argument; `=>` matches it
+hello := (req: Request) -> Response {
+  name := req.body ? {
+    ""  => "world"          // literal arm: body is exactly ""
+    raw => str.trim(raw)    // else bind the value
   }
-  ok(`hello, {name}!\n`)
+  ok(`hello, {name}!`)
 }
 
-echo = (req: Request) -> Response { ok(req.body) }
+echo := (req: Request) -> Response { ok(req.body) }
 
-lines = (req: Request) -> Response {
-  // `#` fans out over the lines and collects; topic is (index, element)
-  numbered = str.lines(req.body) # { (i, line) => `{i + 1}: {line}\n` }
-  ok(str.join(numbered, ""))
+lines := (req: Request) -> Response {
+  // keyed fan-out: `i` is the index, `line` the value
+  numbered := str.lines(req.body) # (i: line => `{i + 1}: {line}`)
+  ok(str.join(numbered, "\n"))
 }
 
-// --- routing : match a tuple topic positionally -----------------------
-
-route = (req: Request) -> Response {
+// --- routing : match a tuple of (method, path) positionally ------------
+route := (req: Request) -> Response {
   (req.method, req.path) ? {
     ("GET",  "/hello") => hello(req)
     ("GET",  "/echo")  => echo(req)
     ("POST", "/lines") => lines(req)
-    (m, p)             => fail(404, `no route: {m} {p}\n`)
+    (m, p)             => fail(404, `no route: {m} {p}`)
   }
 }
 
-// --- request parsing : `-> T ! E` is fallible, `!` propagates (Layer 5)
-
-read_request = (c: net.Conn) -> Request ! str {
-  parts = str.words(net.readline(c)!)          // ! : propagate a read failure
+// --- request parsing : `-> T ! E` is fallible, `!` propagates ----------
+read_request := (c: net.Conn) -> Request ! str {
+  parts := str.words(net.readline(c)!)
   parts ? {
-    [method, path, _] => {                      // a 3-element list pattern
-      { net.readline(c)! != "" } @ { () }       // skip headers: loop while non-blank, eat the blank
-      body = net.read(c, 8192)!
+    [method, path, _] => {
+      { net.readline(c)! != "" } @ { () }       // skip headers: loop until the blank line
+      body := net.read(c, 8192)!
       (method: method, path: path, body: body)
     }
-    _ => "bad request line"!                     // raise: fail with this error value
+    _ => "bad request line"!                      // raise this error value
   }
 }
 
-// --- per connection : `~` defers cleanup; `@` loops until `!` escapes --
-
-handle = (c: net.Conn, id: int) -> () ! str {
-  ~net.close(c)                                  // deferred; runs on every exit path
-  ~sys.print(`[{id}] closed\n`)                  // LIFO: this prints, then close runs
+// --- per connection : `~` defers cleanup; the bare `@` loops till `!` escapes
+handle := (c: net.Conn, id: int) -> () ! str {
+  ~net.close(c)
   sys.print(`[{id}] open\n`)
   @ {
-    resp = route(read_request(c)!)
+    resp := route(read_request(c)!)
     net.write(c, `HTTP/1.1 {resp.status}\r\n\r\n{resp.body}`)!
-    ()                                           // body yields () -> keep looping
+    ()                                            // body yields () -> keep looping
   }
 }
 
-// --- accept loop ------------------------------------------------------
-
-serve = (addr: str) -> () ! str {
-  listener = net.listen(addr)!
-  id: &int = 0
+// --- accept loop -------------------------------------------------------
+serve := (addr: str) -> () ! str {
+  listener := net.listen(addr)!
+  id: &int := 0
   @ {
-    c = net.accept(listener)!                    // a failed accept is fatal -> propagates
+    c := net.accept(listener)!                    // a failed accept is fatal -> propagates
     id += 1
-    handle(c, id)                                // its own failures stay local (result dropped)
+    handle(c, id)                                 // its own failures stay local (dropped)
     ()
   }
 }
 
 // --- entry : main is not fallible, so it handles the error by hand -----
-
-main = (args: [str]) -> int {
-  addr = args[0] || "0.0.0.0:8080"               // partial index + || selector (Layer 3)
+main := (args: [str]) -> int {
+  addr := args[0] || "0.0.0.0:8080"
   sys.print(`listening on {addr}\n`)
-  _, err = serve(addr)                            // take the fallible pair apart
+  _, err := serve(addr)
   err ? { e => { sys.print(`fatal: {e}\n`); 1 } } : 0
 }
-
-// ----------------------------------------------------------------------
-// GAPS this program forced — things MODEL.md leans on but never pins:
-//
-// 1. String interpolation  `` `…{expr}…` `` — used everywhere, defined
-//    nowhere. It is in the originals; fold into Layer 4.
-// 2. `#` topic shape — used (i, line); Layer 2 says only "one block per
-//    element." Decide: list -> (index, element); map -> (key, value).
-// 3. Destructuring patterns in `=>` — tuple (a, b), list [a, b], rest
-//    [a, ...]. Layer 3 defined only literal / name / `_`. Needs the
-//    structural-pattern rules (and that a sub-pattern is itself == + bind).
-// 4. `!` has two jobs — `f()!` unwraps/propagates a fallible, but
-//    `"msg"!` *raises* a plain value as the error. Pin both precisely.
-// 5. Loop-continue tax — a body whose last expression yields a value
-//    exits the loop, so effectful loops need a trailing `()` (see handle,
-//    serve). Confirmed behavior; decide if it deserves sugar.
-// 6. Dropping a fallible — `handle(c, id)` discards a `() ! str`,
-//    silently swallowing its error. Allowed today; is that intended, or
-//    should an unconsumed fallible be a static complaint?
-// 7. Operator precedence — RESOLVED: `?:` is the loosest operator (the
-//    if-else: `err ? {…} : 0`); `||` is a pure value-selector, not an else.
-// 8. Inline `;` — used in `{ sys.print(…); 1 }`. Decide: same-line
-//    separator, or newline-only?

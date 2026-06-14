@@ -1,17 +1,42 @@
-// A tiny tour of Grid — run with:  python -m gridi examples/tour.grid
+// A tour of Grid (the grid.md model) — run with:  python -m gridi examples/tour.grid
+module main
+import sys
+import str
 
-square = (n: int) -> int { n * n }
+// present vs () ; partial operators ; relations chain
+sys.println(`0 ? "y"    => {0 ? "y"}`)
+sys.println(`() ? "y"   => {() ? "y"}`)
+sys.println(`10 / 0     => {10 / 0}`)
+sys.println(`1 < 2 < 3  => {1 < 2 < 3}`)
 
-// range + fan-out (map) + filter (() drops), then reduce
-squares = 1..10 # { (_, n) => square(n) }
-big: &int = 0
-squares @ { (_, s) => s > 25 ? big += s }     // sum the squares over 25
+// := introduces ; = / += store through a place ; the triad over keyed sources
+nums := 1..6
+sys.println(`map        => {nums # (_ * 2)}`)
+sys.println(`filter     => {nums # (n => n % 2 == 0 ? n)}`)
+sum: &int := 0
+nums @ (sum += _)
+sys.println(`reduce     => {sum}`)
+sys.println(`find       => {1..100 @ (n => n * n > 40 ? n)}`)
 
-// fallible + ! propagation
-checked = (n: int) -> int ! str {
-  n > 0 ? n : `not positive: {n}`!
-}
-v, e = checked(big)
+// keyed iteration : _ is the value, `k: v` binds the key
+labelled := ["a", "b", "c"] # (i: x => `{i}:{x}`)
+sys.println(`keyed      => {labelled}`)
 
-// interpolation + UFCS + .len
-`squares={squares} count={squares.len} bigsum={big} checked={v} err={e}`
+// branch ladder ; lambda value ; user-defined combinator
+grade := (n: int) -> str { n >= 90 ? "A" : n >= 80 ? "B" : "C" }
+sys.println(`grade      => {grade(95)} {grade(83)} {grade(70)}`)
+twice := (f: (int) -> int, n: int) -> int { f(f(n)) }
+sys.println(`twice      => {twice(_ => _ * 3, 2)}`)
+
+// fallible (! propagates / raises) ; stream (>> emits, exhaustion is ())
+half := (n: int) -> int ! str { n % 2 == 0 ? n / 2 : `{n} odd`! }
+v, e := half(7)
+sys.println(`half(7)    => {v} / {e}`)
+each := (xs: [int]) >> int { xs @ (x => >> x) }
+s := each([10, 20])
+sys.println(`stream     => {s()} {s()} {s()}`)
+
+// systems : bitwise (tighter than comparison), sized checked conversion
+sys.println(`bits       => {0b1100 & 0b1010} {u8(256)}`)
+
+sys.println("done")

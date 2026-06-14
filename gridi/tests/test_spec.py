@@ -157,3 +157,70 @@ def test_list_store_oob_propagates_with_bang():
            "v, e := f()\n"
            "e")
     assert run(src) == "index out of bounds: 9"
+
+
+# ── IM8: §18 idioms + grafts (breadth) ────────────────────────────────────────
+
+GRADE = 'grade := (n: int) -> str { n >= 90 ? "A" : n >= 80 ? "B" : n >= 70 ? "C" : "F" }\n'
+
+def test_branch_ladder():
+    assert run(GRADE + "grade(95)") == "A"
+    assert run(GRADE + "grade(85)") == "B"
+    assert run(GRADE + "grade(50)") == "F"
+
+def test_dispatch_effectful():
+    src = ("ok: &int := 0\nother: &int := 0\nstatus := 200\n"
+           "status ? { 200 => ok += 1\n_ => other += 1 }\n`{ok} {other}`")
+    assert run(src) == "1 0"
+
+def test_iflet_else():
+    assert run('m := ["host": "x"]\nm["host"] ? str.upper(_) : "none"') == "X"
+    assert run('m := [:]\nm["host"] ? str.upper(_) : "none"') == "none"
+
+def test_compute_then_dispatch():
+    src = ('route := (raw: str) -> str {\n'
+           '  str.upper(raw) ? { "GET" => "read"\n"POST" => "write"\n_ => "unknown" }\n}\n'
+           '`{route("get")} {route("post")} {route("x")}`')
+    assert run(src) == "read write unknown"
+
+def test_interpolation():
+    assert run("a := 3\nc := 'z'\n`a={a} c={c}`") == "a=3 c=z"
+
+def test_ufcs():
+    assert run("dbl := (n: int) -> int { n * 2 }\n5.dbl()") == 10
+
+def test_struct_literal_and_field():
+    assert run("p := (x: 1, y: 2)\np.x + p.y") == 3
+
+def test_fallible_propagate_and_raise():
+    src = ('half := (n: int) -> int ! str { n % 2 == 0 ? n / 2 : `{n} odd`! }\n'
+           'v1, e1 := half(8)\nv2, e2 := half(7)\n`{v1}/{e1} {v2}/{e2}`')
+    assert run(src) == "4/() ()/7 odd"
+
+def test_stream():
+    src = ('each := (xs: [int]) >> int { xs @ (x => >> x) }\n'
+           's := each([10, 20, 30])\n`{s()} {s()} {s()} {s()}`')
+    assert run(src) == "10 20 30 ()"
+
+def test_defer_lifo():
+    import io, contextlib
+    src = ('f := () -> () {\n  ~sys.println("3")\n  sys.println("1")\n  sys.println("2")\n}\nf()')
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        run(src)
+    assert buf.getvalue() == "1\n2\n3\n"
+
+def test_nested_fanout_table():
+    assert run("1..3 # (r => 1..3 # (_ * r))") == [[1, 2, 3], [2, 4, 6], [3, 6, 9]]
+
+def test_ordered_abort_on_error():
+    src = ('process := (n: int) -> () ! str { n < 3 ? () : `too big: {n}`! }\n'
+           'run := (xs: [int]) -> () ! str { xs @ (n => process(n)!) }\n'
+           '_, e := run([1, 2, 5])\ne')
+    assert run(src) == "too big: 5"
+
+def test_pipeline():
+    src = ("odd_sq_sum: &int := 0\n"
+           "1..10 # (n => n % 2 == 1 ? n) # (_ * _) @ (s => odd_sq_sum += s)\n"
+           "odd_sq_sum")
+    assert run(src) == 165
