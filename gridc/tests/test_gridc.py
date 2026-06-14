@@ -269,3 +269,21 @@ def test_lists(body, val, tmp_path):
 ])
 def test_present_relations_and_blocks(program, val, tmp_path):
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("body,val", [
+    # tuple-destructure arm (k, v) => over a list of tuples — reduce
+    ('ps := [(1, 10), (2, 20)]\n  s: &int := 0\n  ps @ ((k, v) => s += k * v)\n  s', 50),
+    # tuple-destructure arm — first-success find (lookup shape)
+    ('ps := [(1, 10), (2, 20), (3, 30)]\n  ps @ ((k, v) => k == 2 ? v)', 20),
+    # lookup over (str, int) pairs by string key — the gridc.grid lookup pattern
+    ('env := [("a", 5), ("b", 7), ("c", 9)]\n  env @ ((k, v) => k == "b" ? v)', 7),
+    # index-bound arm i: x => over a list (gen_args shape)
+    ('xs := [10, 20, 30]\n  s: &int := 0\n  xs @ (i: x => s += i * x)\n  s', 80),
+    # index-bound arm over a list of strings, using both index and element
+    ('xs := ["a", "bb", "ccc"]\n  s: &int := 0\n  xs @ (i: w => s += i + w.len)\n  s', 9),
+])
+def test_arm_patterns(body, val, tmp_path):
+    program = "main := () -> int {\n  " + body + "\n}\n"
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

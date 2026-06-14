@@ -243,10 +243,29 @@ parse_comb := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (acc, cur)
 }
 
-// a combinator body: ( name => stmt ) -> ("arm", name, stmt) ; else ( expr )
+// a combinator body. Forms (all wrapped in ( … )):
+//   ( name => stmt )          -> ("arm", name, stmt)
+//   ( i: name => stmt )       -> ("armidx", idxname, name, stmt)
+//   ( (a, b, …) => stmt )     -> ("armtup", [names], stmt)
+//   ( expr )                  -> expr
 parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
-  tkind(toks, pos) == "(" && tkind(toks, pos + 1) == "name" && tkind(toks, pos + 2) == "=>" ? {
+  k1 := tkind(toks, pos + 1)
+  tkind(toks, pos) == "(" && k1 == "name" && tkind(toks, pos + 2) == "=>" ? {
     s, p := parse_stmt(toks, pos + 3); (("arm", ttext(toks, pos + 1), s), p + 1)
+  } :
+  tkind(toks, pos) == "(" && k1 == "name" && tkind(toks, pos + 2) == ":" && tkind(toks, pos + 4) == "=>" ? {
+    s, p := parse_stmt(toks, pos + 5); (("armidx", ttext(toks, pos + 1), ttext(toks, pos + 3), s), p + 1)
+  } :
+  tkind(toks, pos) == "(" && k1 == "(" ? {
+    names: &[str] := []
+    cur: &int := pos + 2
+    { tkind(toks, cur) == "name" } @ {
+      names = names + [ttext(toks, cur)]
+      cur = tkind(toks, cur + 1) == "," ? cur + 2 : cur + 1
+      ()
+    }
+    s, p := parse_stmt(toks, cur + 2)                   // skip ) and =>
+    (("armtup", names, s), p + 1)
   } :
   { node, p := parse_expr(toks, pos + 1); (node, p + 1) }
 }
@@ -554,6 +573,36 @@ gen_find := (head: str, step: str, L: str, bop: str, bflag: str, bty: str, c: in
   (loop, v, f, bty, c)
 }
 
+// bind an arm's pattern over the element slot `es` (type et), with the loop
+// index available as `idxop` in the body. -> (env', preheader-ir, body-ir, stmt, counter).
+// Field slots are GEPs into es (computed once in the preheader, since es is
+// stable) and the index is one preheader-allocated slot stored each iteration —
+// so nothing is allocated inside the loop body.
+bind_arm := (arm: (str, str), es: str, et: str, idxop: str, env: [(str, str)], c: int) -> ([(str, str)], str, str, (str, str), int) {
+  arm.0 == "armidx" ? {
+    is := `%is{c}`
+    (env + [(arm.1, is, "i64"), (arm.2, es, et)],
+     "  " + is + " = alloca i64\n",
+     "  store i64 " + idxop + ", ptr " + is + "\n",
+     arm.3, c + 1)
+  } :
+  arm.0 == "armtup" ? {
+    e2:  &[(str, str)] := env
+    pre: &str := ""
+    cc:  &int := c
+    arm.1 @ (i: nm => {
+      fty := tup_field(et, i)
+      fld := `%fld{cc}`
+      pre = pre + "  " + fld + " = getelementptr " + lltype(et) + ", ptr " + es + ", i32 0, i32 " + `{i}` + "\n"
+      e2 = e2 + [(nm, fld, fty)]
+      cc = cc + 1
+      ()
+    })
+    (e2, pre, "", arm.2, cc)
+  } :
+  (env + [(arm.1, es, et)], "", "", arm.2, c)            // plain ( name => stmt )
+}
+
 // gen_expr -> (instructions, value-operand, i1 present-flag, type, next-counter).
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
@@ -761,7 +810,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       } :
       gen_find(head, step, L, bop, bflag, bty, c3)
     } :
-    arm.0 == "arm" ? {                                   // src is a list expression
+    arm.0 == "arm" || arm.0 == "armidx" || arm.0 == "armtup" ? {  // list source
       sir, sv, sf, st, c1 := gen_expr(src, env, c)
       et  := elemtype(st)
       etl := lltype(et)
@@ -770,12 +819,13 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       ln := `%ln{c1}`
       iv := `%iv{c1}`
       es := `%es{c1}`
-      bir, be, c3, bop, bflag, bty := gen_stmt(arm.2, env + [(arm.1, es, et)], c1 + 1)
+      benv, pre, bodypre, stmt, c1b := bind_arm(arm, es, et, "%ic" + L, env, c1 + 1)
+      bir, be, c3, bop, bflag, bty := gen_stmt(stmt, benv, c1b)
       head := sir +
         "  " + ln + " = extractvalue {i64, ptr} " + sv + ", 0\n" +
         "  " + lp + " = extractvalue {i64, ptr} " + sv + ", 1\n" +
         "  " + iv + " = alloca i64\n  store i64 0, ptr " + iv + "\n" +
-        "  " + es + " = alloca " + etl + "\n" +
+        "  " + es + " = alloca " + etl + "\n" + pre +
         "  br label %lc" + L + "\n" +
         "lc" + L + ":\n  %ic" + L + " = load i64, ptr " + iv + "\n" +
         "  %cm" + L + " = icmp slt i64 %ic" + L + ", " + ln + "\n" +
@@ -783,7 +833,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "lb" + L + ":\n" +
         "  %ep" + L + " = getelementptr " + etl + ", ptr " + lp + ", i64 %ic" + L + "\n" +
         "  %ev" + L + " = load " + etl + ", ptr %ep" + L + "\n" +
-        "  store " + etl + " %ev" + L + ", ptr " + es + "\n" + bir
+        "  store " + etl + " %ev" + L + ", ptr " + es + "\n" + bodypre + bir
       step := "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
         "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n"
       bflag == "false" ? {
