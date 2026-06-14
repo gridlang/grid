@@ -86,3 +86,74 @@ def test_map_keys():
 
 def test_map_entries():
     assert run('m := ["x": 1]\nm # (k: v => `{k}={v}`)') == ["x=1"]
+
+
+# ── IM5: lambda values + user-defined combinators ─────────────────────────────
+
+def test_lambda_value():
+    assert run("f := _ => _ * 2\nf(5)") == 10
+
+def test_block_lambda_value():
+    assert run("g := { _ * 2 }\ng(5)") == 10
+
+def test_user_combinator_lambda_arg():
+    src = ("myMap := (xs: [int], body: (int) -> int) -> [int] { xs # body(_) }\n"
+           "myMap([1, 2, 3], _ => _ * 2)")
+    assert run(src) == [2, 4, 6]
+
+def test_user_combinator_eta():
+    src = ("dbl := (n: int) -> int { n * 2 }\n"
+           "myMap := (xs: [int], body: (int) -> int) -> [int] { xs # body(_) }\n"
+           "myMap([1, 2, 3], dbl)")
+    assert run(src) == [2, 4, 6]
+
+
+# ── IM6: systems surface — *T, mmio, bitwise, hex, sized conversions ──────────
+
+def test_hex_literal():
+    assert run("0x1000") == 4096
+
+def test_star_cell_as_place():
+    assert run("ctrl: *u32 := mmio.u32(0x1000)\nctrl = 5\nctrl") == 5
+
+def test_bitwise_ops():
+    assert run("6 & 3") == 2
+    assert run("4 | 1") == 5
+    assert run("5 ^ 1") == 4
+    assert run("1 << 4") == 16
+    assert run("16 >> 2") == 4
+
+def test_bitwise_tighter_than_comparison():
+    # Grid: (4 | 1) == 5  ->  5 == 5  ->  5.  (C order 4 | (1 == 5) would be () .)
+    assert run("4 | 1 == 5") == 5
+
+def test_bitwise_inplace():
+    assert run("flags: &int := 0\nflags |= 4\nflags |= 1\nflags") == 5
+
+def test_sized_checked_conversion():
+    assert run("u8(200)") == 200
+    assert run("u8(256)") is UNIT
+    assert run("u8(-1)") is UNIT
+    assert run("i8(-128)") == -128
+
+
+# ── IM7: fallible indexed/member store ────────────────────────────────────────
+
+def test_map_store():
+    assert run('m := ["a": 1]\nm["b"] = 2\nm["b"]') == 2
+
+def test_list_store_in_bounds():
+    assert run("xs := [10, 20, 30]\nxs[1] = 99\nxs[1]") == 99
+
+def test_list_store_oob_is_fallible():
+    assert run("xs := [1, 2]\n_, e := (xs[9] = 5)\ne") == "index out of bounds: 9"
+
+def test_list_store_oob_propagates_with_bang():
+    src = ("f := () -> () ! str {\n"
+           "  xs := [1, 2]\n"
+           "  (xs[9] = 5)!\n"
+           "  ()\n"
+           "}\n"
+           "v, e := f()\n"
+           "e")
+    assert run(src) == "index out of bounds: 9"

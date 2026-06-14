@@ -193,6 +193,9 @@ class Parser:
                 self.nl()
                 return Store(Name(name), self.parse_expr())
         e = self.parse_expr()
+        if self.at("PUNCT", "=") and isinstance(e, (Index, Member)):   # place[i] = expr
+            self.eat("PUNCT", "="); self.nl()
+            return Store(e, self.parse_expr())
         if self.at("FATARROW"):
             self.eat("FATARROW")
             self.nl()
@@ -348,10 +351,18 @@ class Parser:
         return l
 
     def parse_range(self):
-        l = self.parse_add()
+        l = self.parse_bitwise()
         while self.at("RANGE"):
             self.eat("RANGE"); self.nl()
-            l = Range(l, self.parse_add())
+            l = Range(l, self.parse_bitwise())
+        return l
+
+    def parse_bitwise(self):
+        l = self.parse_add()
+        while (self.at("PUNCT", "&") or self.at("PUNCT", "|") or self.at("PUNCT", "^")
+               or self.at("SHIFT", "<<") or self.at("SHIFT", ">>")):
+            op = self.cur().val; self.i += 1; self.nl()
+            l = Bin(op, l, self.parse_add())
         return l
 
     def parse_add(self):
@@ -445,8 +456,8 @@ class Parser:
             names.append(self.eat("NAME").val)
             if self.at("PUNCT", ":"):
                 self.eat("PUNCT", ":")
-                if self.at("PUNCT", "&"):
-                    self.eat("PUNCT", "&")
+                if self.at("PUNCT", "&") or self.at("OP", "*"):
+                    self.i += 1                     # &T / *T capability marker
                 self.parse_type()                   # parameter type, ignored at runtime
             if self.at("PUNCT", ","):
                 self.eat("PUNCT", ","); self.nl()
@@ -476,7 +487,8 @@ class Parser:
     def parse_atom(self):
         t = self.cur()
         if t.kind == "INT":
-            self.i += 1; return Lit(int(t.val))
+            self.i += 1
+            return Lit(int(t.val, 0) if t.val[:2].lower() in ("0x", "0o", "0b") else int(t.val))
         if t.kind == "FLOAT":
             self.i += 1; return Lit(float(t.val))
         if t.kind == "STR" or t.kind == "CHAR":
@@ -538,6 +550,10 @@ class Parser:
                 and not self._paren_has_arrow()):          # struct (x: 1), not a keyed pattern
             return self.parse_struct_rest()
         first = self.parse_expr(); self.nl()
+        if self.at("PUNCT", "=") and isinstance(first, (Index, Member)):   # (place[i] = expr)
+            self.eat("PUNCT", "="); self.nl()
+            v = self.parse_expr(); self.nl(); self.eat("PUNCT", ")")
+            return Store(first, v)
         if self.at("PUNCT", ","):
             items = [first]
             while self.at("PUNCT", ","):

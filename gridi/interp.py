@@ -83,6 +83,15 @@ class TypeTag:
         return self.name
 
 
+class Lambda:
+    """A reified body — `_ => expr`, `pat => expr`, or `{ … }` — in value position.
+    Captures its defining env; applied (by a call or a combinator) to one argument."""
+    __slots__ = ("node", "env")
+    def __init__(self, node, env):
+        self.node = node
+        self.env = env
+
+
 class Stream:
     """An eagerly-collected stream instance: yields each value, then () forever."""
     __slots__ = ("items", "cursor")
@@ -144,6 +153,10 @@ def _make_stdlib():
         },
         "net": {k: _net_unavailable for k in
                 ("listen", "accept", "readline", "read", "write", "close")},
+        # mmio.* : a mock for *T effectful cells — each handle reads/writes a Grid place
+        # (the volatile/effect semantics aren't observable in a tree-walker validator).
+        "mmio": {n: (lambda addr: 0) for n in
+                 ("u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64")},
     }
 
 
@@ -259,7 +272,7 @@ def eval_node(node, env, topic):
     if t is Index:
         return eval_index(eval_node(node.obj, env, topic), eval_node(node.idx, env, topic))
     if t is Block:
-        return eval_scope_block(node, Env(env), topic)
+        return Lambda(node, env)                        # value position: reify (applied later)
     if t is Bin:
         return eval_bin(node, env, topic)
     if t is Try:
@@ -271,25 +284,32 @@ def eval_node(node, env, topic):
         return UNIT
     if t is Iter:
         return eval_iter(node, env, topic)
-    if t is Match:
-        sub = Env(env)
-        if match_pat(node.pat, topic, sub):
-            return eval_node(node.res, sub, topic)
-        return UNIT
+    if t is Match:                                      # value position: reify
+        return Lambda(node, env)
     if t is KeyedMatch:
-        sub = Env(env)
-        if (_key_stack and match_pat(node.key, _key_stack[-1], sub)
-                and match_pat(node.pat, topic, sub)):
-            return eval_node(node.res, sub, topic)
-        return UNIT
+        raise RuntimeError("keyed pattern `k: v` is valid only in iteration")
 
     raise RuntimeError(f"cannot eval {node}")
 
 
 def eval_body(body, env, value):
-    """Run a combinator body with `value` as its current argument (`_`)."""
-    if type(body) is Block:
+    """Apply a body to one argument (`_` = value): a block runs; a `=>` arm matches
+    and commits; a bare expression evaluates with `_` bound. This is *application*,
+    distinct from reifying a `=>`/`{ }` as a Lambda value (eval_node)."""
+    tb = type(body)
+    if tb is Block:
         return eval_scope_block(body, Env(env), value)
+    if tb is Match:
+        sub = Env(env)
+        if match_pat(body.pat, value, sub):
+            return eval_node(body.res, sub, value)
+        return UNIT
+    if tb is KeyedMatch:
+        sub = Env(env)
+        if (_key_stack and match_pat(body.key, _key_stack[-1], sub)
+                and match_pat(body.pat, value, sub)):
+            return eval_node(body.res, sub, value)
+        return UNIT
     return eval_node(body, Env(env), value)
 
 
@@ -300,6 +320,8 @@ def eval_call(node, env, topic):
 
 
 def apply_func(f, args):
+    if isinstance(f, Lambda):                          # a reified body, applied to one arg
+        return eval_body(f.node, f.env, args[0] if args else UNIT)
     if isinstance(f, Stream):                          # s() : next value, or ()
         return f.advance()
     if isinstance(f, Func):
@@ -369,6 +391,30 @@ def eval_index(obj, idx):
     return UNIT
 
 
+def eval_store_index(target, val, env, topic):
+    # `place[i] = v` / `place.field = v` — a store; success yields (), an out-of-bounds
+    # index yields a Fallible error (consume with `!`). Map insert always succeeds.
+    if type(target) is Index:
+        obj = eval_node(target.obj, env, topic)
+        idx = eval_node(target.idx, env, topic)
+        if isinstance(obj, list):
+            if isinstance(idx, int) and -len(obj) <= idx < len(obj):
+                obj[idx] = val
+                return UNIT
+            return Fallible(UNIT, f"index out of bounds: {grid_str(idx)}")
+        if isinstance(obj, dict):
+            obj[idx] = val
+            return UNIT
+        return Fallible(UNIT, "not indexable")
+    if type(target) is Member:
+        obj = eval_node(target.obj, env, topic)
+        if isinstance(obj, dict):
+            obj[target.key] = val
+            return UNIT
+        return Fallible(UNIT, f"no such field: {target.key}")
+    raise RuntimeError(f"cannot store into {target}")
+
+
 def _arith(op, l, r):
     if l is UNIT or r is UNIT:
         return UNIT
@@ -384,6 +430,16 @@ def _arith(op, l, r):
         if r == 0:
             return UNIT
         return l // r if isinstance(l, int) and isinstance(r, int) else l / r
+    if op == "&":
+        return l & r
+    if op == "|":
+        return l | r
+    if op == "^":
+        return l ^ r
+    if op == "<<":
+        return l << r
+    if op == ">>":
+        return l >> r
     raise RuntimeError(f"unknown arithmetic op {op}")
 
 
@@ -401,7 +457,7 @@ def eval_bin(node, env, topic):
     if l is UNIT or r is UNIT:
         return UNIT
 
-    if op in ("+", "-", "*", "/", "%"):
+    if op in ("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"):
         return _arith(op, l, r)
     if op == "==":
         return r if grid_eq(l, r) else UNIT
@@ -419,10 +475,9 @@ def eval_bin(node, env, topic):
 
 
 def _eval_branch(node, env, topic):
-    # a `?` / `?:` branch: a block runs in a fresh scope; anything else evaluates in place
-    if type(node) is Block:
-        return eval_scope_block(node, Env(env), topic)
-    return eval_node(node, env, topic)
+    # a `?` / `?:` branch is a body applied to the subject: a block runs, a `=>` arm
+    # matches and commits, a bare expression evaluates with `_` = the subject.
+    return eval_body(node, env, topic)
 
 
 def eval_scope_block(block, env, topic):
@@ -545,7 +600,7 @@ def grid_str(v):
         return "[" + ", ".join(grid_str(x) for x in v) + "]"
     if isinstance(v, dict):
         return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
-    if isinstance(v, Func):
+    if isinstance(v, (Func, Lambda)):
         return "<fn>"
     if isinstance(v, TypeTag):
         return v.name
@@ -556,11 +611,26 @@ def grid_str(v):
     return str(v)
 
 
+_SIZED = {
+    "u8": (0, 255), "u16": (0, 65535), "u32": (0, 2**32 - 1), "u64": (0, 2**64 - 1),
+    "i8": (-128, 127), "i16": (-32768, 32767),
+    "i32": (-2**31, 2**31 - 1), "i64": (-2**63, 2**63 - 1),
+}
+
+
+def _checked(lo, hi):
+    return lambda v: v if isinstance(v, int) and lo <= v <= hi else UNIT
+
+
 def make_global_env():
     g = Env()
     for name in ("int", "num", "char"):                 # base type names as inert tags
         g.define(name, TypeTag(name))
-    for name, ns in STDLIB.items():                      # str / sys / net available by default
+    for name, (lo, hi) in _SIZED.items():               # sized numerics: checked conversions
+        g.define(name, _checked(lo, hi))
+    g.define("f32", lambda v: float(v))
+    g.define("f64", lambda v: float(v))
+    for name, ns in STDLIB.items():                      # str / sys / net / mmio by default
         g.define(name, ns)
     return g
 
