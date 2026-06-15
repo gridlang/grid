@@ -108,9 +108,39 @@ lex := (src: str) -> [(str, str)] {
 }
 
 // ── parser ───────────────────────────────────────────────────────────
-// expr: ("int",v) ("name",x) ("bin",op,l,r) ("call",name,[args])
-// stmt: ("let",n,e) ("store",n,e) ("inplace",n,op,e) ("ret",e)
-// top:  ("fn", name, [params], [stmts])
+// The AST is the `Node` sum type below — one uniform 16-byte {tag,ptr} value
+// per node, so a parser slot can hold any node shape (this is what lets gridc
+// compile its own AST: heterogeneous tuples can't share a static type, variants
+// can). Tokens stay (kind,text) pairs (read via tkind/ttext), type-reps stay
+// string-tagged tuples ("lst",T)/("fn",R)/("var",N), env entries stay
+// (name,slot,type) triples, and patterns/arms/variant-decls stay uniform-shape
+// tuples — none of those are heterogeneous, so none need to be variants.
+//   match arm:  (patkind, casename, [binds], resultNode)   patkind "ctor"|"wild"
+//   variant decl: ("variant", TypeName, [("case", CaseName, [fieldtype])])
+Node := | Int str | Str str | Name str | Unit
+  | Bin str Node Node
+  | Rel str Node Node
+  | Range Node Node
+  | Member Node str
+  | Index Node Node
+  | Call str [Node]
+  | Tuple [Node]
+  | List [Node]
+  | Block [Node]
+  | Iter str Node Node
+  | If Node Node Node
+  | Try Node Node
+  | Match Node [(str, str, [str], Node)]
+  | Arm str Node
+  | ArmIdx str str Node
+  | ArmTup [str] Node
+  | Let str Node
+  | LetTy str str Node
+  | Destruct [str] Node
+  | Store str Node
+  | Inplace str str Node
+  | Ret Node
+  | Fn str [(str, str)] str [Node]
 
 tkind := (toks: [(str, str)], pos: int) -> str { pos < toks.len ? toks[pos].0 : "eof" }
 ttext := (toks: [(str, str)], pos: int) -> str { toks[pos].1 }
@@ -121,8 +151,8 @@ cmpop := (k: str) -> str { k == "==" || k == "!=" || k == "<" || k == "<=" || k 
 boolop := (k: str) -> str { k == "&&" || k == "||" }
 inplaceop := (k: str) -> str { k == "+=" || k == "-=" || k == "*=" || k == "/=" }
 
-parse_args := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
-  args: &[(str, str)] := []
+parse_args := (toks: [(str, str)], pos: int) -> ([Node], int) {
+  args: &[Node] := []
   cur: &int := pos
   { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
     node, p := parse_expr(toks, cur)
@@ -135,55 +165,55 @@ parse_args := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
 
 // a `backtick` interpolation -> a + -tree of ("str", lit) parts and __itoa(expr)
 // calls, so codegen reuses string concat and the call path (no new node kind).
-parse_interp := (raw: str) -> (str, str) {
-  parts: &[(str, str)] := []
+parse_interp := (raw: str) -> Node {
+  parts: &[Node] := []
   lit:   &str := ""
   i:     &int := 0
   n := raw.len
   { i < n } @ {
     raw[i] == "{" ? {
-      lit.len > 0 ? { parts = parts + [("str", lit)] }
+      lit.len > 0 ? { parts = parts + [Str(lit)] }
       lit = ""
       e: &str := ""
       i += 1
       { i < n && raw[i] != "}" } @ { e = e + raw[i]; i += 1; () }
       i += 1
       enode, ep := parse_expr(lex(e), 0)
-      parts = parts + [("call", "__itoa", [enode])]
+      parts = parts + [Call("__itoa", [enode])]
     } :
     { lit = lit + raw[i]; i += 1 }
     ()
   }
-  lit.len > 0 ? { parts = parts + [("str", lit)] }
-  parts.len == 0 ? ("str", "") :
+  lit.len > 0 ? { parts = parts + [Str(lit)] }
+  parts.len == 0 ? Str("") :
   {
-    acc: &(str, str) := parts[0]
+    acc: &Node := parts[0]
     k:   &int := 1
-    { k < parts.len } @ { acc = ("bin", "+", acc, parts[k]); k += 1; () }
+    { k < parts.len } @ { acc = Bin("+", acc, parts[k]); k += 1; () }
     acc
   }
 }
 
-parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_atom := (toks: [(str, str)], pos: int) -> (Node, int) {
   k := tkind(toks, pos)
-  k == "int" ? (("int", ttext(toks, pos)), pos + 1) :
-  k == "str" ? (("str", ttext(toks, pos)), pos + 1) :
+  k == "int" ? (Int(ttext(toks, pos)), pos + 1) :
+  k == "str" ? (Str(ttext(toks, pos)), pos + 1) :
   k == "bq"  ? (parse_interp(ttext(toks, pos)), pos + 1) :
   k == "name" ? {
     tkind(toks, pos + 1) == "(" ? {
       args, p := parse_args(toks, pos + 2)
-      (("call", ttext(toks, pos), args), p)
+      (Call(ttext(toks, pos), args), p)
     } :
-    (("name", ttext(toks, pos)), pos + 1)
+    (Name(ttext(toks, pos)), pos + 1)
   } :
   k == "{" ? {                                         // { stmts } block expression
     stmts, p := parse_body(toks, pos + 1)
-    (("block", stmts), p + 1)
+    (Block(stmts), p + 1)
   } :
   k == "[" ? {
-    tkind(toks, pos + 1) == "]" ? (("list", []), pos + 2) :   // empty list
+    tkind(toks, pos + 1) == "]" ? (List([]), pos + 2) :   // empty list
     {
-      elems: &[(str, str)] := []
+      elems: &[Node] := []
       cur: &int := pos + 1
       { tkind(toks, cur) != "]" && tkind(toks, cur) != "eof" } @ {
         e, p := parse_expr(toks, cur)
@@ -191,15 +221,15 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
         cur = tkind(toks, p) == "," ? p + 1 : p
         ()
       }
-      (("list", elems), cur + 1)
+      (List(elems), cur + 1)
     }
   } :
   k == "(" ? {
-    tkind(toks, pos + 1) == ")" ? (("unit", ""), pos + 2) :   // () the unit value
+    tkind(toks, pos + 1) == ")" ? (Unit, pos + 2) :   // () the unit value
     {
     first, p := parse_expr(toks, pos + 1)
     tkind(toks, p) == "," ? {                          // (a, b, ...) tuple
-      elems: &[(str, str)] := [first]
+      elems: &[Node] := [first]
       cur: &int := p
       { tkind(toks, cur) == "," } @ {
         e, p2 := parse_expr(toks, cur + 1)
@@ -207,34 +237,35 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
         cur = p2
         ()
       }
-      (("tuple", elems), cur + 1)
+      (Tuple(elems), cur + 1)
     } :
     (first, p + 1)                                      // plain (expr)
     }
   } :
-  (("int", "0"), pos + 1)
+  (Int("0"), pos + 1)
 }
 
 // postfix chain: atom ( .member | [index] )*
-parse_postfix := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_postfix := (toks: [(str, str)], pos: int) -> (Node, int) {
   node, p := parse_atom(toks, pos)
-  acc: &(str, str) := node
+  acc: &Node := node
   cur: &int := p
   { tkind(toks, cur) == "." || tkind(toks, cur) == "[" } @ {
     tkind(toks, cur) == "." ? {
       tkind(toks, cur + 2) == "(" ? {                  // obj.method(args) -> qualified call
         args, p2 := parse_args(toks, cur + 3)
-        acc = ("call", acc.1 + "." + ttext(toks, cur + 1), args)
+        base := acc ? { Name(x) => x }                 // the receiver is a bare name (str./fs./…)
+        acc = Call(base + "." + ttext(toks, cur + 1), args)
         cur = p2
       } :
       {
-        acc = ("member", acc, ttext(toks, cur + 1))
+        acc = Member(acc, ttext(toks, cur + 1))
         cur = cur + 2
       }
     } :
     {
       idx, p2 := parse_expr(toks, cur + 1)
-      acc = ("index", acc, idx)
+      acc = Index(acc, idx)
       cur = p2 + 1                                      // skip ]
     }
     ()
@@ -242,76 +273,76 @@ parse_postfix := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (acc, cur)
 }
 
-parse_mul := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_mul := (toks: [(str, str)], pos: int) -> (Node, int) {
   node, p := parse_postfix(toks, pos)
-  acc: &(str, str) := node
+  acc: &Node := node
   cur: &int := p
   { mulop(tkind(toks, cur)) } @ {
     op := ttext(toks, cur)
     rhs, p2 := parse_postfix(toks, cur + 1)
-    acc = ("bin", op, acc, rhs)
+    acc = Bin(op, acc, rhs)
     cur = p2
     ()
   }
   (acc, cur)
 }
 
-parse_add := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_add := (toks: [(str, str)], pos: int) -> (Node, int) {
   node, p := parse_mul(toks, pos)
-  acc: &(str, str) := node
+  acc: &Node := node
   cur: &int := p
   { addop(tkind(toks, cur)) } @ {
     op := ttext(toks, cur)
     rhs, p2 := parse_mul(toks, cur + 1)
-    acc = ("bin", op, acc, rhs)
+    acc = Bin(op, acc, rhs)
     cur = p2
     ()
   }
   (acc, cur)
 }
 
-// range: a .. b  ->  ("range", a, b)
-parse_range := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// range: a .. b  ->  Range(a, b)
+parse_range := (toks: [(str, str)], pos: int) -> (Node, int) {
   l, p := parse_add(toks, pos)
   tkind(toks, p) == ".." ? {
-    r, p2 := parse_add(toks, p + 1); (("range", l, r), p2)
+    r, p2 := parse_add(toks, p + 1); (Range(l, r), p2)
   } :
   (l, p)
 }
 
-// a single relation (no chaining yet): ("rel", op, l, r)
-parse_cmp := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// a single relation (no chaining yet): Rel(op, l, r)
+parse_cmp := (toks: [(str, str)], pos: int) -> (Node, int) {
   l, p := parse_range(toks, pos)
   cmpop(tkind(toks, p)) ? {
-    r, p2 := parse_range(toks, p + 1); (("rel", ttext(toks, p), l, r), p2)
+    r, p2 := parse_range(toks, p + 1); (Rel(ttext(toks, p), l, r), p2)
   } :
   (l, p)
 }
 
 // boolean selectors && / || , looser than comparison
-parse_bool := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_bool := (toks: [(str, str)], pos: int) -> (Node, int) {
   l, p := parse_cmp(toks, pos)
-  acc: &(str, str) := l
+  acc: &Node := l
   cur: &int := p
   { boolop(tkind(toks, cur)) } @ {
     op := ttext(toks, cur)
     r, p2 := parse_cmp(toks, cur + 1)
-    acc = ("bin", op, acc, r)
+    acc = Bin(op, acc, r)
     cur = p2
     ()
   }
   (acc, cur)
 }
 
-// the combinators: source @ body / source # body -> ("iter", op, source, body)
-parse_comb := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// the combinators: source @ body / source # body -> Iter(op, source, body)
+parse_comb := (toks: [(str, str)], pos: int) -> (Node, int) {
   l, p := parse_bool(toks, pos)
-  acc: &(str, str) := l
+  acc: &Node := l
   cur: &int := p
   { tkind(toks, cur) == "@" || tkind(toks, cur) == "#" } @ {
     op := ttext(toks, cur)
     body, p2 := parse_armbody(toks, cur + 1)
-    acc = ("iter", op, acc, body)
+    acc = Iter(op, acc, body)
     cur = p2
     ()
   }
@@ -323,13 +354,13 @@ parse_comb := (toks: [(str, str)], pos: int) -> ((str, str), int) {
 //   ( i: name => stmt )       -> ("armidx", idxname, name, stmt)
 //   ( (a, b, …) => stmt )     -> ("armtup", [names], stmt)
 //   ( expr )                  -> expr
-parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_armbody := (toks: [(str, str)], pos: int) -> (Node, int) {
   k1 := tkind(toks, pos + 1)
   tkind(toks, pos) == "(" && k1 == "name" && tkind(toks, pos + 2) == "=>" ? {
-    s, p := parse_stmt(toks, pos + 3); (("arm", ttext(toks, pos + 1), s), p + 1)
+    s, p := parse_stmt(toks, pos + 3); (Arm(ttext(toks, pos + 1), s), p + 1)
   } :
   tkind(toks, pos) == "(" && k1 == "name" && tkind(toks, pos + 2) == ":" && tkind(toks, pos + 4) == "=>" ? {
-    s, p := parse_stmt(toks, pos + 5); (("armidx", ttext(toks, pos + 1), ttext(toks, pos + 3), s), p + 1)
+    s, p := parse_stmt(toks, pos + 5); (ArmIdx(ttext(toks, pos + 1), ttext(toks, pos + 3), s), p + 1)
   } :
   tkind(toks, pos) == "(" && k1 == "(" ? {
     names: &[str] := []
@@ -340,7 +371,7 @@ parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
       ()
     }
     s, p := parse_stmt(toks, cur + 2)                   // skip ) and =>
-    (("armtup", names, s), p + 1)
+    (ArmTup(names, s), p + 1)
   } :
   { node, p := parse_expr(toks, pos); (node, p) }       // a { block } or ( expr ) body
 }
@@ -367,11 +398,12 @@ is_match_block := (toks: [(str, str)], pos: int) -> int {
   found
 }
 
-// a match pattern: `_` (wildcard), `Case(b0, b1, …)` (ctor with bindings, `_` to
-// skip a field), or a bare `Case` (nullary). -> ("pwild","_") | ("pctor",name,[binds]).
-parse_pattern := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// a match pattern, returned as a uniform tuple (kind, casename, [binds]):
+// `_` -> ("wild","",[]); `Case(b0, b1, …)` -> ("ctor", Case, [binds]) (`_` skips
+// a field); a bare `Case` -> ("ctor", Case, []) (nullary).
+parse_pattern := (toks: [(str, str)], pos: int) -> ((str, str, [str]), int) {
   nm := ttext(toks, pos)
-  nm == "_" ? (("pwild", "_"), pos + 1) :
+  nm == "_" ? (("wild", "", []), pos + 1) :
   tkind(toks, pos + 1) == "(" ? {
     binds: &[str] := []
     cur:   &int := pos + 2
@@ -380,48 +412,48 @@ parse_pattern := (toks: [(str, str)], pos: int) -> ((str, str), int) {
       cur = tkind(toks, cur + 1) == "," ? cur + 2 : cur + 1
       ()
     }
-    (("pctor", nm, binds), cur + 1)
+    (("ctor", nm, binds), cur + 1)
   } :
-  (("pctor", nm, []), pos + 1)
+  (("ctor", nm, []), pos + 1)
 }
 
 // the arms of a match block: `pat => result` lines until the closing `}`.
-// -> [("marm", pattern, result-stmt)], index just past `}`.
-parse_arms := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
-  arms: &[(str, str)] := []
+// -> [(patkind, casename, [binds], result-Node)], index just past `}`.
+parse_arms := (toks: [(str, str)], pos: int) -> ([(str, str, [str], Node)], int) {
+  arms: &[(str, str, [str], Node)] := []
   cur:  &int := skip_nl(toks, pos + 1)                  // skip `{` and any newlines
   { tkind(toks, cur) != "}" && tkind(toks, cur) != "eof" } @ {
     pat, p1 := parse_pattern(toks, cur)
     res, p2 := parse_stmt(toks, p1 + 1)                 // skip `=>`
-    arms = arms + [("marm", pat, res)]
+    arms = arms + [(pat.0, pat.1, pat.2, res)]
     cur = skip_nl(toks, p2)
     ()
   }
   (arms, cur + 1)
 }
 
-// cond ? then : else  ->  ("if", cond, then, else)   (loosest, right-assoc)
-// cond ? then         ->  ("try", cond, then)        (one-armed: present or ())
-// subj ? { pat => res … } -> ("match", subj, arms)   (variant tag dispatch)
-parse_ternary := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// cond ? then : else  ->  If(cond, then, else)   (loosest, right-assoc)
+// cond ? then         ->  Try(cond, then)        (one-armed: present or ())
+// subj ? { pat => res … } -> Match(subj, arms)   (variant tag dispatch)
+parse_ternary := (toks: [(str, str)], pos: int) -> (Node, int) {
   cond, p := parse_comb(toks, pos)
   tkind(toks, p) == "?" ? {
     tkind(toks, p + 1) == "{" && is_match_block(toks, p + 1) == 1 ? {
       arms, p2 := parse_arms(toks, p + 1)
-      (("match", cond, arms), p2)
+      (Match(cond, arms), p2)
     } :
     {
       then, p2 := parse_expr(toks, p + 1)
       tkind(toks, p2) == ":" ? {
-        els, p3 := parse_expr(toks, p2 + 1); (("if", cond, then, els), p3)
+        els, p3 := parse_expr(toks, p2 + 1); (If(cond, then, els), p3)
       } :
-      (("try", cond, then), p2)
+      (Try(cond, then), p2)
     }
   } :
   (cond, p)
 }
 
-parse_expr := (toks: [(str, str)], pos: int) -> ((str, str), int) { parse_ternary(toks, pos) }
+parse_expr := (toks: [(str, str)], pos: int) -> (Node, int) { parse_ternary(toks, pos) }
 
 skip_nl := (toks: [(str, str)], pos: int) -> int {
   cur: &int := pos
@@ -436,7 +468,7 @@ skip_type := (toks: [(str, str)], pos: int) -> int {
   cur + 1
 }
 
-parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+parse_stmt := (toks: [(str, str)], pos: int) -> (Node, int) {
   k0 := tkind(toks, pos)
   k1 := tkind(toks, pos + 1)
   k0 == "name" && k1 == "," ? {                        // a, b, ... := tuple-expr
@@ -448,27 +480,27 @@ parse_stmt := (toks: [(str, str)], pos: int) -> ((str, str), int) {
       ()
     }
     node, p := parse_expr(toks, cur + 1)               // cur is at :=
-    (("destruct", names, node), p)
+    (Destruct(names, node), p)
   } :
   k0 == "name" && k1 == ":=" ? {
-    node, p := parse_expr(toks, pos + 2); (("let", ttext(toks, pos), node), p)
+    node, p := parse_expr(toks, pos + 2); (Let(ttext(toks, pos), node), p)
   } :
   k0 == "name" && k1 == ":" ? {                        // name: Type := expr
     ty, tp := parse_type(toks, pos + 2)                // tp lands on :=
     node, p := parse_expr(toks, tp + 1)
-    (("letty", ttext(toks, pos), ty, node), p)
+    (LetTy(ttext(toks, pos), ty, node), p)
   } :
   k0 == "name" && k1 == "=" ? {
-    node, p := parse_expr(toks, pos + 2); (("store", ttext(toks, pos), node), p)
+    node, p := parse_expr(toks, pos + 2); (Store(ttext(toks, pos), node), p)
   } :
   k0 == "name" && inplaceop(k1) ? {
-    node, p := parse_expr(toks, pos + 2); (("inplace", ttext(toks, pos), k1, node), p)
+    node, p := parse_expr(toks, pos + 2); (Inplace(ttext(toks, pos), k1, node), p)
   } :
-  { node, p := parse_expr(toks, pos); (("ret", node), p) }
+  { node, p := parse_expr(toks, pos); (Ret(node), p) }
 }
 
-parse_body := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
-  stmts: &[(str, str)] := []
+parse_body := (toks: [(str, str)], pos: int) -> ([Node], int) {
+  stmts: &[Node] := []
   cur: &int := skip_nl(toks, pos)
   { tkind(toks, cur) != "}" && tkind(toks, cur) != "eof" } @ {
     s, p := parse_stmt(toks, cur)
@@ -546,24 +578,26 @@ parse_params := (toks: [(str, str)], pos: int) -> ([str], int) {
   (ps, cur + 1)
 }
 
-// name := ( params ) -> rettype { stmts }
-parse_fn := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// name := ( params ) -> rettype { stmts }  ->  Fn(name, params, rettype, stmts)
+parse_fn := (toks: [(str, str)], pos: int) -> (Node, int) {
   name := ttext(toks, pos)
   params, p1 := parse_params(toks, pos + 3)        // skip name := (
   rty, p2 := tkind(toks, p1) == "->" ? parse_type(toks, p1 + 1) : ("i64", p1)
   b: &int := p2
   { tkind(toks, b) != "{" && tkind(toks, b) != "eof" } @ { b += 1; () }
   stmts, p3 := parse_body(toks, b + 1)
-  (("fn", name, params, rty, stmts), p3 + 1)
+  (Fn(name, params, rty, stmts), p3 + 1)
 }
 
 // Name := | Case0 T.. | Case1 T.. | …   ->   ("variant", name, [("case", cname, [fieldtypes])]).
-// each case's fields are space-separated type atoms; cases may span lines (a leading
-// `|` after a newline continues the declaration). The leading `|` distinguishes this
-// from `x := a | b` (bitwise-or), so parse_program peeks for `:=` `|` before calling.
-parse_variant := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+// A variant decl is NOT a Node (it never flows through codegen as an expression);
+// it stays a uniform-shape tuple, collected separately from the fn list. Each
+// case's fields are space-separated type atoms; cases may span lines (a leading
+// `|` after a newline continues the declaration). The leading `|` distinguishes
+// this from `x := a | b` (bitwise-or), so parse_program peeks `:=` `|` first.
+parse_variant := (toks: [(str, str)], pos: int) -> ((str, str, [(str, str, [str])]), int) {
   name := ttext(toks, pos)
-  cases: &[(str, str)] := []
+  cases: &[(str, str, [str])] := []
   cur:   &int := pos + 2                            // skip name :=
   { tkind(toks, cur) == "|" } @ {
     cname := ttext(toks, cur + 1)
@@ -582,8 +616,11 @@ parse_variant := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (("variant", name, cases), cur)
 }
 
-parse_program := (toks: [(str, str)]) -> [(str, str)] {
-  fns: &[(str, str)] := []
+// -> (fns, variant-decls). The two are separate homogeneous lists: fns are Node
+// values, variant-decls are uniform ("variant", name, cases) tuples.
+parse_program := (toks: [(str, str)]) -> ([Node], [(str, str, [(str, str, [str])])]) {
+  fns: &[Node] := []
+  vds: &[(str, str, [(str, str, [str])])] := []
   cur: &int := skip_nl(toks, 0)
   { tkind(toks, cur) != "eof" } @ {
     // skip module / import header lines (not functions)
@@ -593,7 +630,7 @@ parse_program := (toks: [(str, str)]) -> [(str, str)] {
     } :
     tkind(toks, cur) == "name" && tkind(toks, cur + 1) == ":=" && tkind(toks, cur + 2) == "|" ? {
       v, p := parse_variant(toks, cur)               // a sum-type declaration
-      fns = fns + [v]
+      vds = vds + [v]
       cur = skip_nl(toks, p)
     } :
     {
@@ -603,7 +640,7 @@ parse_program := (toks: [(str, str)]) -> [(str, str)] {
     }
     ()
   }
-  fns
+  (fns, vds)
 }
 
 // ── codegen ──────────────────────────────────────────────────────────
@@ -696,36 +733,41 @@ gen_present := (v: str, vt: str, c: int) -> (str, str, int) {
 
 // gen a condition -> (instructions, i1 tag, counter). A relation compares; a
 // && / || combines its operands' presence; any other value tests presence.
-gen_cond := (node: (str, str), env: [(str, str)], c: int) -> (str, str, int) {
-  node.0 == "rel" ? {
-    la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
-    ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
-    lt == "str" ? {                                    // compare via __strcmp
-      sc := `%t{c2}`
-      tag := `%t{c2 + 1}`
-      (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
-       "  " + tag + " = icmp " + relpred(node.1) + " i64 " + sc + ", 0\n", tag, c2 + 2)
-    } :
-    {
-      tag := `%t{c2}`
-      (la + ra + "  " + tag + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n",
-       tag, c2 + 1)
+gen_cond := (node: Node, env: [(str, str)], c: int) -> (str, str, int) {
+  node ? {
+    Rel(op, l, r) => {
+      la, lv, lf, lt, c1 := gen_expr(l, env, c)
+      ra, rv, rf, rt, c2 := gen_expr(r, env, c1)
+      lt == "str" ? {                                  // compare via __strcmp
+        sc := `%t{c2}`
+        tag := `%t{c2 + 1}`
+        (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
+         "  " + tag + " = icmp " + relpred(op) + " i64 " + sc + ", 0\n", tag, c2 + 2)
+      } :
+      {
+        tag := `%t{c2}`
+        (la + ra + "  " + tag + " = icmp " + relpred(op) + " i64 " + lv + ", " + rv + "\n",
+         tag, c2 + 1)
+      }
     }
-  } :
-  node.0 == "bin" && boolop(node.1) ? {                // && / || over conditions
-    la, ta, c1 := gen_cond(node.2, env, c)
-    lb, tb, c2 := gen_cond(node.3, env, c1)
-    tag := `%t{c2}`
-    op := node.1 == "&&" ? "and" : "or"
-    (la + lb + "  " + tag + " = " + op + " i1 " + ta + ", " + tb + "\n", tag, c2 + 1)
-  } :
-  { e, v, vf, vt, c1 := gen_expr(node, env, c)         // any other value: present?
-    pir, tag, c2 := gen_present(v, vt, c1)
-    (e + pir, tag, c2) }
+    Bin(op, l, r) => boolop(op) ? {                    // && / || over conditions
+      la, ta, c1 := gen_cond(l, env, c)
+      lb, tb, c2 := gen_cond(r, env, c1)
+      tag := `%t{c2}`
+      llo := op == "&&" ? "and" : "or"
+      (la + lb + "  " + tag + " = " + llo + " i1 " + ta + ", " + tb + "\n", tag, c2 + 1)
+    } :
+    { e, v, vf, vt, c1 := gen_expr(node, env, c)       // a non-bool binary: present?
+      pir, tag, c2 := gen_present(v, vt, c1)
+      (e + pir, tag, c2) }
+    _ => { e, v, vf, vt, c1 := gen_expr(node, env, c)  // any other value: present?
+      pir, tag, c2 := gen_present(v, vt, c1)
+      (e + pir, tag, c2) }
+  }
 }
 
 // gen each call argument, returning (instructions, "i64 a, i64 b", counter).
-gen_args := (args: [(str, str)], env: [(str, str)], c0: int) -> (str, str, int) {
+gen_args := (args: [Node], env: [(str, str)], c0: int) -> (str, str, int) {
   ir:  &str := ""
   ops: &str := ""
   c:   &int := c0
@@ -740,7 +782,7 @@ gen_args := (args: [(str, str)], env: [(str, str)], c0: int) -> (str, str, int) 
 }
 
 // gen a sequence of expressions -> (instructions, [operands], [types], counter).
-gen_elems := (elems: [(str, str)], env: [(str, str)], c0: int) -> (str, [str], [str], int) {
+gen_elems := (elems: [Node], env: [(str, str)], c0: int) -> (str, [str], [str], int) {
   ir:  &str := ""
   ops: &[str] := []
   tys: &[str] := []
@@ -784,43 +826,45 @@ gen_find := (head: str, step: str, L: str, bop: str, bflag: str, bty: str, c: in
 // Field slots are GEPs into es (computed once in the preheader, since es is
 // stable) and the index is one preheader-allocated slot stored each iteration —
 // so nothing is allocated inside the loop body.
-bind_arm := (arm: (str, str), es: str, et: str, idxop: str, env: [(str, str)], c: int) -> ([(str, str)], str, str, (str, str), int) {
-  arm.0 == "armidx" ? {
-    is := `%is{c}`
-    (env + [(arm.1, is, "i64"), (arm.2, es, et)],
-     "  " + is + " = alloca i64\n",
-     "  store i64 " + idxop + ", ptr " + is + "\n",
-     arm.3, c + 1)
-  } :
-  arm.0 == "armtup" ? {
-    e2:  &[(str, str)] := env
-    pre: &str := ""
-    cc:  &int := c
-    arm.1 @ (i: nm => {
-      fty := tup_field(et, i)
-      fld := `%fld{cc}`
-      pre = pre + "  " + fld + " = getelementptr " + lltype(et) + ", ptr " + es + ", i32 0, i32 " + `{i}` + "\n"
-      e2 = e2 + [(nm, fld, fty)]
-      cc = cc + 1
-      ()
-    })
-    (e2, pre, "", arm.2, cc)
-  } :
-  (env + [(arm.1, es, et)], "", "", arm.2, c)            // plain ( name => stmt )
+bind_arm := (arm: Node, es: str, et: str, idxop: str, env: [(str, str)], c: int) -> ([(str, str)], str, str, Node, int) {
+  arm ? {
+    ArmIdx(iname, vname, s) => {
+      is := `%is{c}`
+      (env + [(iname, is, "i64"), (vname, es, et)],
+       "  " + is + " = alloca i64\n",
+       "  store i64 " + idxop + ", ptr " + is + "\n",
+       s, c + 1)
+    }
+    ArmTup(names, s) => {
+      e2:  &[(str, str)] := env
+      pre: &str := ""
+      cc:  &int := c
+      names @ (i: nm => {
+        fty := tup_field(et, i)
+        fld := `%fld{cc}`
+        pre = pre + "  " + fld + " = getelementptr " + lltype(et) + ", ptr " + es + ", i32 0, i32 " + `{i}` + "\n"
+        e2 = e2 + [(nm, fld, fty)]
+        cc = cc + 1
+        ()
+      })
+      (e2, pre, "", s, cc)
+    }
+    Arm(nm, s) => (env + [(nm, es, et)], "", "", s, c)    // plain ( name => stmt )
+  }
 }
 
 // bind a ctor pattern's fields: load the payload struct from `plr`, then bind each
 // named field (`_` skips a field) as a fresh local. -> (env', instructions, counter).
-bind_pat := (pat: (str, str), env: [(str, str)], plr: str, c: int) -> ([(str, str)], str, int) {
-  pat.0 == "pctor" && pat.2.len > 0 ? {
-    marker := lookup_type(env, pat.1)                    // ("ctor", tag, typename, [fieldtypes])
+bind_pat := (pk: str, cn: str, binds: [str], env: [(str, str)], plr: str, c: int) -> ([(str, str)], str, int) {
+  pk == "ctor" && binds.len > 0 ? {
+    marker := lookup_type(env, cn)                       // ("ctor", tag, typename, [fieldtypes])
     ftypes := marker.3
     pll := "{" + tup_ll(ftypes) + "}"
     ps  := `%t{c}`
     ir: &str := "  " + ps + " = load " + pll + ", ptr " + plr + "\n"
     e2: &[(str, str)] := env
     cc: &int := c + 1
-    pat.2 @ (j: bn => {
+    binds @ (j: bn => {
       bn != "_" ? {
         fty  := ftypes[j]
         fll  := lltype(fty)
@@ -838,13 +882,13 @@ bind_pat := (pat: (str, str), env: [(str, str)], plr: str, c: int) -> ([(str, st
   (env, "", c)                                           // wildcard / nullary: nothing to bind
 }
 
-// subj ? { pat => res … } — dispatch on the variant tag. Each arm tests its case
-// tag (a `_` wildcard matches unconditionally), binds its fields, runs its result,
-// and stores into a shared slot; no arm matching yields () (flag false). The arm
-// result type (taken from the first arm) types the slot. -> (ir, value, flag, type, c).
-gen_match := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
-  arms := node.2
-  sir, sv, sf, st, c1 := gen_expr(node.1, env, c)
+// subj ? { pat => res … } — dispatch on the variant tag. Each arm (patkind,
+// casename, binds, result) tests its case tag (a `_` wildcard matches
+// unconditionally), binds its fields, runs its result, and stores into a shared
+// slot; no arm matching yields () (flag false). The arm result type (taken from
+// the first arm) types the slot. -> (ir, value, flag, type, counter).
+gen_match := (subj: Node, arms: [(str, str, [str], Node)], env: [(str, str)], c: int) -> (str, str, str, str, int) {
+  sir, sv, sf, st, c1 := gen_expr(subj, env, c)
   L    := `{c1}`
   tagr := `%t{c1}`
   plr  := `%t{c1 + 1}`
@@ -861,18 +905,21 @@ gen_match := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, st
   na := arms.len
   { i < na } @ {
     arm := arms[i]
-    pat := arm.1
-    benv, bir, c2 := bind_pat(pat, env, plr, cc)
-    si, renv, c3, rop, rfl, rt := gen_stmt(arm.2, benv, c2)
+    pk    := arm.0
+    cn    := arm.1
+    binds := arm.2
+    res   := arm.3
+    benv, bir, c2 := bind_pat(pk, cn, binds, env, plr, cc)
+    si, renv, c3, rop, rfl, rt := gen_stmt(res, benv, c2)
     i == 0 ? { rty = lltype(rt); rgty = rt } : ()
     ropv := rop == "" ? (rty == "i64" ? "0" : "zeroinitializer") : rop  // an effect arm yields ()
     test: &str := ""
-    pat.0 == "pwild" ? {
+    pk == "wild" ? {
       test = "  br label %arm" + L + "_" + `{i}` + "\n"
       cc = c3
     } :
     {
-      marker := lookup_type(env, pat.1)
+      marker := lookup_type(env, cn)
       cmp := `%t{c3}`
       test = "  " + cmp + " = icmp eq i64 " + tagr + ", " + marker.1 + "\n" +
         "  br i1 " + cmp + ", label %arm" + L + "_" + `{i}` + ", label %nx" + L + "_" + `{i}` + "\n"
@@ -906,13 +953,13 @@ gen_match := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, st
 // gen_expr -> (instructions, value-operand, i1 present-flag, type, next-counter).
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
-gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
-  node.0 == "block" ? gen_block(node.1, env, c) :
-  node.0 == "match" ? gen_match(node, env, c) :
-  node.0 == "unit" ? ("", "0", "false", "i64", c) :    // () — absent
-  node.0 == "int"  ? ("", node.1, "true", "i64", c) :
-  node.0 == "str"  ? {                                  // literal -> fat {len, ptr}
-    txt := node.1
+gen_expr := (node: Node, env: [(str, str)], c: int) -> (str, str, str, str, int) {
+  node ? {
+  Block(stmts) => gen_block(stmts, env, c)
+  Match(subj, arms) => gen_match(subj, arms, env, c)
+  Unit => ("", "0", "false", "i64", c)               // () — absent
+  Int(v) => ("", v, "true", "i64", c)
+  Str(txt) => {                                        // literal -> fat {len, ptr}
     ln  := txt.len
     lns := `{ln}`
     p  := `%t{c}`
@@ -924,28 +971,28 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     pack := "  " + v + " = insertvalue {i64, ptr} undef, i64 " + lns + ", 0\n" +
       "  " + v2 + " = insertvalue {i64, ptr} " + v + ", ptr " + p + ", 1\n"
     (head + store + pack, v2, "true", "str", c + 3)
-  } :
-  node.0 == "name" ? {
-    ty := lookup_type(env, node.1)
-    slot := lookup(env, node.1)
-    is_ctor(ty) ? {                                      // a nullary variant: {tag, null}
+  }
+  Name(nm) => {
+    ty := lookup_type(env, nm)
+    slot := lookup(env, nm)
+    is_ctor(ty) ? {                                     // a nullary variant: {tag, null}
       v0 := `%t{c}`
       v1 := `%t{c + 1}`
       ("  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + ty.1 + ", 0\n" +
        "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr null, 1\n",
        v1, "true", ("var", ty.2), c + 2)
     } :
-    is_fn(ty) ? {                                        // a function value
+    is_fn(ty) ? {                                       // a function value
       slot[0] == "@" ?
-        ("", slot, "true", ty, c) :                      // top-level fn: its address @name
-        { reg := `%t{c}`                                 // fn-valued param: load the code ptr
+        ("", slot, "true", ty, c) :                     // top-level fn: its address @name
+        { reg := `%t{c}`                                // fn-valued param: load the code ptr
           ("  " + reg + " = load ptr, ptr " + slot + "\n", reg, "true", ty, c + 1) }
     } :
     { reg := `%t{c}`
       ("  " + reg + " = load " + lltype(ty) + ", ptr " + slot + "\n", reg, "true", ty, c + 1) }
-  } :
-  node.0 == "tuple" ? {                                 // (a, b, ...) -> aggregate
-    eir, ops, tys, c1 := gen_elems(node.1, env, c)
+  }
+  Tuple(elems) => {                                     // (a, b, ...) -> aggregate
+    eir, ops, tys, c1 := gen_elems(elems, env, c)
     tty := ("tup", tys)
     llt := lltype(tty)
     acc: &str := "undef"
@@ -960,9 +1007,9 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       ()
     })
     (body, acc, "true", tty, cc)
-  } :
-  node.0 == "list" ? {                                 // [e0, e1, ...] -> {len, cap, ptr}
-    node.1.len == 0 ? {                                // empty: {0, 0, null}
+  }
+  List(elems) => {                                      // [e0, e1, ...] -> {len, cap, ptr}
+    elems.len == 0 ? {                                 // empty: {0, 0, null}
       r0 := `%t{c}`
       r1 := `%t{c + 1}`
       r2 := `%t{c + 2}`
@@ -972,10 +1019,10 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
        r2, "true", ("lst", "i64"), c + 3)
     } :
     {
-      eir, ops, tys, c1 := gen_elems(node.1, env, c)
+      eir, ops, tys, c1 := gen_elems(elems, env, c)
       et  := tys[0]
       etl := lltype(et)
-      n   := `{node.1.len}`
+      n   := `{elems.len}`
       endp := `%t{c1}`
       bytes := `%t{c1 + 1}`
       base := `%t{c1 + 2}`
@@ -999,21 +1046,21 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "  " + v2 + " = insertvalue {i64, i64, ptr} " + v1 + ", ptr " + base + ", 2\n"
       (body, v2, "true", ("lst", et), cc + 3)
     }
-  } :
-  node.0 == "member" ? {
-    oir, ov, of, ot, c1 := gen_expr(node.1, env, c)
+  }
+  Member(obj, fld) => {
+    oir, ov, of, ot, c1 := gen_expr(obj, env, c)
     reg := `%t{c1}`
-    node.2 == "len" ?                                   // str/list length field 0
+    fld == "len" ?                                      // str/list length field 0
       (oir + "  " + reg + " = extractvalue " + lltype(ot) + " " + ov + ", 0\n", reg, "true", "i64", c1 + 1) :
       {                                                 // numeric tuple field .N
-        fty := tup_field(ot, fieldnum(node.2))
-        (oir + "  " + reg + " = extractvalue " + lltype(ot) + " " + ov + ", " + node.2 + "\n",
+        fty := tup_field(ot, fieldnum(fld))
+        (oir + "  " + reg + " = extractvalue " + lltype(ot) + " " + ov + ", " + fld + "\n",
          reg, "true", fty, c1 + 1)
       }
-  } :
-  node.0 == "index" ? {                                 // obj[i]
-    oir, ov, of, ot, c1 := gen_expr(node.1, env, c)
-    iir, iv, iff, it, c2 := gen_expr(node.2, env, c1)
+  }
+  Index(obj, idx) => {                                  // obj[i]
+    oir, ov, of, ot, c1 := gen_expr(obj, env, c)
+    iir, iv, iff, it, c2 := gen_expr(idx, env, c1)
     ot == "str" ? {                                     // s[i] -> shared 1-char str
       bp := `%t{c2}`
       elt := `%t{c2 + 1}`
@@ -1038,59 +1085,60 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
        "  " + elt + " = load " + etl + ", ptr " + ep + "\n",
        elt, "true", et, c2 + 3)
     }
-  } :
-  node.0 == "call" && node.1 == "fs.read" ? {           // host: read a whole file -> str
-    air, ops, c2 := gen_args(node.2, env, c)
-    reg := `%t{c2}`
-    (air + "  " + reg + " = call {i64, ptr} @__read(" + ops + ")\n", reg, "true", "str", c2 + 1)
-  } :
-  node.0 == "call" && node.1 == "fs.write" ? {          // host: write a str to a file -> ()
-    air, ops, c2 := gen_args(node.2, env, c)
-    (air + "  call void @__write(" + ops + ")\n", "0", "false", "i64", c2)
-  } :
-  node.0 == "call" && is_ctor(lookup_type(env, node.1)) ? {  // variant construction
-    marker := lookup_type(env, node.1)                  // ("ctor", tag, typename, [fieldtypes])
-    ftypes := marker.3
-    pll := "{" + tup_ll(ftypes) + "}"                   // the payload struct layout
-    air, ops, tys, c1 := gen_elems(node.2, env, c)
-    acc:  &str := "undef"
-    body: &str := air
-    cc:   &int := c1
-    ops @ (i: op => {                                    // build the payload struct value
-      reg := `%t{cc}`
-      body = body + "  " + reg + " = insertvalue " + pll + " " + acc + ", " +
-        lltype(ftypes[i]) + " " + op + ", " + `{i}` + "\n"
-      acc = reg
-      cc = cc + 1
-      ()
-    })
-    szp := `%t{cc}`
-    szb := `%t{cc + 1}`
-    mem := `%t{cc + 2}`
-    v0  := `%t{cc + 3}`
-    v1  := `%t{cc + 4}`
-    body = body +                                        // alloc the payload, store it, pack {tag, ptr}
-      "  " + szp + " = getelementptr " + pll + ", ptr null, i64 1\n" +
-      "  " + szb + " = ptrtoint ptr " + szp + " to i64\n" +
-      "  " + mem + " = call ptr @__alloc(i64 " + szb + ")\n" +
-      "  store " + pll + " " + acc + ", ptr " + mem + "\n" +
-      "  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + marker.1 + ", 0\n" +
-      "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + mem + ", 1\n"
-    (body, v1, "true", ("var", marker.2), cc + 5)
-  } :
-  node.0 == "call" ? {
-    cir, callee, cf, ct, c1 := gen_expr(("name", node.1), env, c)  // @name or a loaded fn ptr
-    air, ops, c2 := gen_args(node.2, env, c1)
-    rt := ct.1                                          // ("fn", rettype) -> rettype
-    reg := `%t{c2}`
-    (cir + air + "  " + reg + " = call " + lltype(rt) + " " + callee + "(" + ops + ")\n",
-     reg, "true", rt, c2 + 1)
-  } :
-  node.0 == "if" ? {
-    cir, tag, c1 := gen_cond(node.1, env, c)
+  }
+  Call(nm, args) =>
+    nm == "fs.read" ? {                                 // host: read a whole file -> str
+      air, ops, c2 := gen_args(args, env, c)
+      reg := `%t{c2}`
+      (air + "  " + reg + " = call {i64, ptr} @__read(" + ops + ")\n", reg, "true", "str", c2 + 1)
+    } :
+    nm == "fs.write" ? {                                // host: write a str to a file -> ()
+      air, ops, c2 := gen_args(args, env, c)
+      (air + "  call void @__write(" + ops + ")\n", "0", "false", "i64", c2)
+    } :
+    is_ctor(lookup_type(env, nm)) ? {                   // variant construction
+      marker := lookup_type(env, nm)                    // ("ctor", tag, typename, [fieldtypes])
+      ftypes := marker.3
+      pll := "{" + tup_ll(ftypes) + "}"                 // the payload struct layout
+      air, ops, tys, c1 := gen_elems(args, env, c)
+      acc:  &str := "undef"
+      body: &str := air
+      cc:   &int := c1
+      ops @ (i: op => {                                  // build the payload struct value
+        reg := `%t{cc}`
+        body = body + "  " + reg + " = insertvalue " + pll + " " + acc + ", " +
+          lltype(ftypes[i]) + " " + op + ", " + `{i}` + "\n"
+        acc = reg
+        cc = cc + 1
+        ()
+      })
+      szp := `%t{cc}`
+      szb := `%t{cc + 1}`
+      mem := `%t{cc + 2}`
+      v0  := `%t{cc + 3}`
+      v1  := `%t{cc + 4}`
+      body = body +                                      // alloc the payload, store it, pack {tag, ptr}
+        "  " + szp + " = getelementptr " + pll + ", ptr null, i64 1\n" +
+        "  " + szb + " = ptrtoint ptr " + szp + " to i64\n" +
+        "  " + mem + " = call ptr @__alloc(i64 " + szb + ")\n" +
+        "  store " + pll + " " + acc + ", ptr " + mem + "\n" +
+        "  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + marker.1 + ", 0\n" +
+        "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + mem + ", 1\n"
+      (body, v1, "true", ("var", marker.2), cc + 5)
+    } :
+    {                                                  // ordinary call
+      cir, callee, cf, ct, c1 := gen_expr(Name(nm), env, c)  // @name or a loaded fn ptr
+      air, ops, c2 := gen_args(args, env, c1)
+      rt := ct.1                                        // ("fn", rettype) -> rettype
+      reg := `%t{c2}`
+      (cir + air + "  " + reg + " = call " + lltype(rt) + " " + callee + "(" + ops + ")\n",
+       reg, "true", rt, c2 + 1)
+    }
+  If(cond, then, els) => {
+    cir, tag, c1 := gen_cond(cond, env, c)
     res := `%r{c1}`
-    tir, tv, tf, tt, c3 := gen_expr(node.2, env, c1 + 1)
-    eir, ev, ef, et, c4 := gen_expr(node.3, env, c3)
+    tir, tv, tf, tt, c3 := gen_expr(then, env, c1 + 1)
+    eir, ev, ef, et, c4 := gen_expr(els, env, c3)
     rty := lltype(tt)
     L := `{c4}`                                       // shared label suffix
     body := cir + "  " + res + " = alloca " + rty + "\n" +
@@ -1102,12 +1150,12 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
       "merge" + L + ":\n"
     reg := `%t{c4 + 1}`
     (body + "  " + reg + " = load " + rty + ", ptr " + res + "\n", reg, "true", tt, c4 + 2)
-  } :
-  node.0 == "try" ? {                                  // cond ? then -> present|()
-    cir, tag, c1 := gen_cond(node.1, env, c)
+  }
+  Try(cond, then) => {                                 // cond ? then -> present|()
+    cir, tag, c1 := gen_cond(cond, env, c)
     vp := `%rp{c1}`
     fp := `%rf{c1}`
-    tir, tv, tf, tt, c3 := gen_expr(node.2, env, c1 + 1)
+    tir, tv, tf, tt, c3 := gen_expr(then, env, c1 + 1)
     rty  := lltype(tt)
     zero := zerov(tt)
     L := `{c3}`
@@ -1123,36 +1171,35 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     f := `%t{c3 + 1}`
     (body + "  " + v + " = load " + rty + ", ptr " + vp + "\n" +
             "  " + f + " = load i1, ptr " + fp + "\n", v, f, tt, c3 + 2)
-  } :
-  node.0 == "rel" ? {                                  // yields the right operand (present) or ()
-    la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
-    ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
+  }
+  Rel(op, l, r) => {                                   // yields the right operand (present) or ()
+    la, lv, lf, lt, c1 := gen_expr(l, env, c)
+    ra, rv, rf, rt, c2 := gen_expr(r, env, c1)
     rll := lltype(rt)
     lt == "str" ? {
       sc := `%t{c2}`
       cmp := `%t{c2 + 1}`
       sel := `%t{c2 + 2}`
       (la + ra + "  " + sc + " = call i64 @__strcmp({i64, ptr} " + lv + ", {i64, ptr} " + rv + ")\n" +
-       "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + sc + ", 0\n" +
+       "  " + cmp + " = icmp " + relpred(op) + " i64 " + sc + ", 0\n" +
        "  " + sel + " = select i1 " + cmp + ", " + rll + " " + rv + ", " + rll + " " + zerov(rt) + "\n",
        sel, cmp, rt, c2 + 3)
     } :
     {
       cmp := `%t{c2}`
       sel := `%t{c2 + 1}`
-      (la + ra + "  " + cmp + " = icmp " + relpred(node.1) + " i64 " + lv + ", " + rv + "\n" +
+      (la + ra + "  " + cmp + " = icmp " + relpred(op) + " i64 " + lv + ", " + rv + "\n" +
        "  " + sel + " = select i1 " + cmp + ", " + rll + " " + rv + ", " + rll + " " + zerov(rt) + "\n",
        sel, cmp, rt, c2 + 2)
     }
-  } :
-  node.0 == "iter" ? {                                 // src @|# (name => body)
-    src := node.2
-    arm := node.3
-    src.0 == "block" ? {                               // { cond } @ { body } — while loop
+  }
+  Iter(op, src, arm) =>                                // src @|# (name => body)
+    src ? {
+    Block(cstmts) => {                                 // { cond } @ { body } — while loop
       // the condition is the block's final expression, re-checked each iteration
       // as a real condition (so int relations test their icmp, not a value).
-      cstmts := src.1
-      condexpr := cstmts[cstmts.len - 1].1
+      condexpr := cstmts[cstmts.len - 1] ? { Ret(e) => e
+        _ => Unit }
       cir, ctag, c1 := gen_cond(condexpr, env, c)
       L := `{c1}`
       bir, bv, bf, bt, c2 := gen_expr(arm, env, c1)
@@ -1161,30 +1208,33 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
        "  br i1 " + ctag + ", label %wb" + L + ", label %we" + L + "\n" +
        "wb" + L + ":\n" + bir + "  br label %wc" + L + "\n" +
        "we" + L + ":\n", "0", "false", "i64", c2)
-    } :
-    src.0 == "range" && arm.0 == "arm" ? {
+    }
+    Range(lo, hi) => arm ? {
       // a `..` range counts the element from lo to hi inclusive; the arm's
       // bound name IS the counter slot, so the body reads it like any local.
-      lir, lov, lf, lt, c1 := gen_expr(src.1, env, c)
-      hir, hiv, hf, ht, c2 := gen_expr(src.2, env, c1)
-      L  := `{c2}`
-      iv := `%iv{c2}`
-      bir, be, c3, bop, bflag, bty := gen_stmt(arm.2, env + [(arm.1, iv, "i64")], c2 + 1)
-      head := lir + hir +
-        "  " + iv + " = alloca i64\n  store i64 " + lov + ", ptr " + iv + "\n" +
-        "  br label %lc" + L + "\n" +
-        "lc" + L + ":\n  %ic" + L + " = load i64, ptr " + iv + "\n" +
-        "  %cm" + L + " = icmp sle i64 %ic" + L + ", " + hiv + "\n" +
-        "  br i1 %cm" + L + ", label %lb" + L + ", label %le" + L + "\n" +
-        "lb" + L + ":\n" + bir
-      step := "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
-        "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n"
-      bflag == "false" ? {
-        (head + step + "le" + L + ":\n", "0", "false", "i64", c3)
-      } :
-      gen_find(head, step, L, bop, bflag, bty, c3)
-    } :
-    arm.0 == "arm" || arm.0 == "armidx" || arm.0 == "armtup" ? {  // list source
+      Arm(an, astmt) => {
+        lir, lov, lf, lt, c1 := gen_expr(lo, env, c)
+        hir, hiv, hf, ht, c2 := gen_expr(hi, env, c1)
+        L  := `{c2}`
+        iv := `%iv{c2}`
+        bir, be, c3, bop, bflag, bty := gen_stmt(astmt, env + [(an, iv, "i64")], c2 + 1)
+        head := lir + hir +
+          "  " + iv + " = alloca i64\n  store i64 " + lov + ", ptr " + iv + "\n" +
+          "  br label %lc" + L + "\n" +
+          "lc" + L + ":\n  %ic" + L + " = load i64, ptr " + iv + "\n" +
+          "  %cm" + L + " = icmp sle i64 %ic" + L + ", " + hiv + "\n" +
+          "  br i1 %cm" + L + ", label %lb" + L + ", label %le" + L + "\n" +
+          "lb" + L + ":\n" + bir
+        step := "  %in" + L + " = load i64, ptr " + iv + "\n  %nx" + L + " = add i64 %in" + L + ", 1\n" +
+          "  store i64 %nx" + L + ", ptr " + iv + "\n  br label %lc" + L + "\n"
+        bflag == "false" ? {
+          (head + step + "le" + L + ":\n", "0", "false", "i64", c3)
+        } :
+        gen_find(head, step, L, bop, bflag, bty, c3)
+      }
+      _ => ("", "0", "false", "i64", c)
+    }
+    _ => {                                              // a general list source
       sir, sv, sf, st, c1 := gen_expr(src, env, c)
       et  := elemtype(st)
       etl := lltype(et)
@@ -1214,13 +1264,12 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         (head + step + "le" + L + ":\n", "0", "false", "i64", c3)
       } :
       gen_find(head, step, L, bop, bflag, bty, c3)
-    } :
-    ("", "0", "false", "i64", c)
-  } :
-  {                                                    // binary op
-    la, lv, lf, lt, c1 := gen_expr(node.2, env, c)
-    ra, rv, rf, rt, c2 := gen_expr(node.3, env, c1)
-    lt == "str" && node.1 == "+" ? {                   // string concatenation
+    }
+  }
+  Bin(op, l, r) => {                                   // binary op
+    la, lv, lf, lt, c1 := gen_expr(l, env, c)
+    ra, rv, rf, rt, c2 := gen_expr(r, env, c1)
+    lt == "str" && op == "+" ? {                       // string concatenation
       al := `%t{c2}`
       ap := `%t{c2 + 1}`
       bl := `%t{c2 + 2}`
@@ -1244,7 +1293,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "  " + rv1 + " = insertvalue {i64, ptr} " + rv0 + ", ptr " + np + ", 1\n"
       (instr, rv1, "true", "str", c2 + 9)
     } :
-    lt != "i64" && lt != "str" && node.1 == "+" ? {     // list append (immutable copy): xs + ys
+    lt != "i64" && lt != "str" && op == "+" ? {         // list append (immutable copy): xs + ys
       et  := elemtype(lt)
       etl := lltype(et)
       instr := la + ra +
@@ -1270,10 +1319,10 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
         "  %t" + `{c2 + 15}` + " = insertvalue {i64, i64, ptr} %t" + `{c2 + 14}` + ", ptr %t" + `{c2 + 7}` + ", 2\n"
       (instr, "%t" + `{c2 + 15}`, "true", lt, c2 + 16)
     } :
-    boolop(node.1) ? {                                  // && present-guard / || present-select
+    boolop(op) ? {                                     // && present-guard / || present-select
       pir, ptag, c3 := gen_present(lv, lt, c2)
       sel := `%t{c3}`
-      node.1 == "&&" ?
+      op == "&&" ?
         (la + ra + pir + "  " + sel + " = select i1 " + ptag + ", " + lltype(rt) + " " + rv +
            ", " + lltype(rt) + " " + zerov(rt) + "\n", sel, "true", rt, c3 + 1) :
         (la + ra + pir + "  " + sel + " = select i1 " + ptag + ", " + lltype(lt) + " " + lv +
@@ -1281,9 +1330,11 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
     } :
     {
       reg := `%t{c2}`
-      instr := la + ra + "  " + reg + " = " + llop(node.1) + " i64 " + lv + ", " + rv + "\n"
+      instr := la + ra + "  " + reg + " = " + llop(op) + " i64 " + lv + ", " + rv + "\n"
       (instr, reg, "true", "i64", c2 + 1)
     }
+  }
+  _ => ("", "0", "false", "i64", c)                    // Range/Arm/… never reach gen_expr directly
   }
 }
 
@@ -1293,7 +1344,7 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
 // type its result slot).
 // amortized in-place append of each element to the &[T] list in `slot`
 // (load, push via @__push_n with capacity-doubling, store back). -> (ir, counter).
-gen_push := (slot: str, lty: str, elems: [(str, str)], env: [(str, str)], c: int) -> (str, int) {
+gen_push := (slot: str, lty: str, elems: [Node], env: [(str, str)], c: int) -> (str, int) {
   et  := elemtype(lty)
   etl := lltype(et)
   cur := `%t{c}`
@@ -1319,28 +1370,34 @@ gen_push := (slot: str, lty: str, elems: [(str, str)], env: [(str, str)], c: int
   (ir + "  store {i64, i64, ptr} " + acc + ", ptr " + slot + "\n", cc)
 }
 
-gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str, str) {
-  s.0 == "let" ? {
-    i2, op, of, ot, c2 := gen_expr(s.2, env, c)
+// the generic store path: evaluate `rhs` and store into `slot` (an effect -> ()).
+gen_store := (rhs: Node, slot: str, lty: str, env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str, str) {
+  i2, op, of, ot, c2 := gen_expr(rhs, env, c)
+  (i2 + "  store " + lltype(lty) + " " + op + ", ptr " + slot + "\n", env, c2, "", "false", "i64")
+}
+
+gen_stmt := (s: Node, env: [(str, str)], c: int) -> (str, [(str, str)], int, str, str, str) {
+  s ? {
+  Let(nm, rhs) => {
+    i2, op, of, ot, c2 := gen_expr(rhs, env, c)
     rty := lltype(ot)
     slot := `%s{c2}`
     (i2 + "  " + slot + " = alloca " + rty + "\n  store " + rty + " " + op + ", ptr " + slot + "\n",
-     env + [(s.1, slot, ot)], c2 + 1, "", "false", "i64")
-  } :
-  s.0 == "letty" ? {                                    // name: Type := expr (annotated)
-    aty := s.2                                          // the declared type
+     env + [(nm, slot, ot)], c2 + 1, "", "false", "i64")
+  }
+  LetTy(nm, aty, rhs) => {                              // name: Type := expr (annotated)
     rty := lltype(aty)
-    i2, op, of, ot, c2 := gen_expr(s.3, env, c)
+    i2, op, of, ot, c2 := gen_expr(rhs, env, c)
     slot := `%s{c2}`
     (i2 + "  " + slot + " = alloca " + rty + "\n  store " + rty + " " + op + ", ptr " + slot + "\n",
-     env + [(s.1, slot, aty)], c2 + 1, "", "false", "i64")
-  } :
-  s.0 == "destruct" ? {                                 // a, b, ... := tuple-expr
-    ri, ro, rf, rt, c2 := gen_expr(s.2, env, c)
+     env + [(nm, slot, aty)], c2 + 1, "", "false", "i64")
+  }
+  Destruct(names, rhs) => {                             // a, b, ... := tuple-expr
+    ri, ro, rf, rt, c2 := gen_expr(rhs, env, c)
     ir: &str := ri
     e2: &[(str, str)] := env
     cc: &int := c2
-    s.1 @ (i: nm => {
+    names @ (i: nm => {
       fty := tup_field(rt, i)
       fll := lltype(fty)
       val  := `%t{cc}`
@@ -1352,50 +1409,37 @@ gen_stmt := (s: (str, str), env: [(str, str)], c: int) -> (str, [(str, str)], in
       ()
     })
     (ir, e2, cc, "", "false", "i64")
-  } :
-  s.0 == "store" ? {
-    lty := lookup_type(env, s.1)
-    slot := lookup(env, s.1)
-    rhs := s.2
+  }
+  Store(nm, rhs) => {
+    lty  := lookup_type(env, nm)
+    slot := lookup(env, nm)
     // self-append  xs = xs + [ ... ]  on a &[T]  ->  amortized in-place push.
-    // Intermediate bindings required: gridi lexes chained numeric members
-    // (rhs.2.0) as a float, so each access must be a single .N on a bound value.
-    is_list(lty) && rhs.0 == "bin" ? {
-      lhs := rhs.2
-      rl  := rhs.3
-      rhs.1 == "+" && lhs.0 == "name" && lhs.1 == s.1 && rl.0 == "list" ? {
-        pir, c2 := gen_push(slot, lty, rl.1, env, c)
-        (pir, env, c2, "", "false", "i64")
-      } :
-      {
-        i2, op, of, ot, c2 := gen_expr(rhs, env, c)
-        (i2 + "  store " + lltype(lty) + " " + op + ", ptr " + slot + "\n", env, c2, "", "false", "i64")
-      }
-    } :
-    {
-      i2, op, of, ot, c2 := gen_expr(s.2, env, c)
-      (i2 + "  store " + lltype(lty) + " " + op + ", ptr " + slot + "\n", env, c2, "", "false", "i64")
-    }
-  } :
-  s.0 == "inplace" ? {
-    lty := lookup_type(env, s.1)
-    slot := lookup(env, s.1)
-    rl := s.3
-    is_list(lty) && s.2 == "+=" && rl.0 == "list" ? {     // xs += [ ... ]  ->  in-place push
-      pir, c2 := gen_push(slot, lty, rl.1, env, c)
-      (pir, env, c2, "", "false", "i64")
-    } :
-    {
-      // x op= e  is  x = x op e; reuse gen_expr's typed binary by rewriting it.
-      expanded := ("bin", iop(s.2), ("name", s.1), s.3)
-      i2, op, of, ot, c2 := gen_expr(expanded, env, c)
-      (i2 + "  store " + lltype(lty) + " " + op + ", ptr " + slot + "\n", env, c2, "", "false", "i64")
-    }
-  } :
-  { i2, op, of, ot, c2 := gen_expr(s.1, env, c); (i2, env, c2, op, of, ot) }
+    is_list(lty) ? (rhs ? {
+      Bin(bop, lhs, rl) => (bop == "+" && (lhs ? { Name(x) => x
+        _ => "" }) == nm) ? (rl ? {
+          List(es) => { pir, c2 := gen_push(slot, lty, es, env, c); (pir, env, c2, "", "false", "i64") }
+          _ => gen_store(rhs, slot, lty, env, c)
+        }) : gen_store(rhs, slot, lty, env, c)
+      _ => gen_store(rhs, slot, lty, env, c)
+    }) :
+    gen_store(rhs, slot, lty, env, c)
+  }
+  Inplace(nm, op, rhs) => {
+    lty  := lookup_type(env, nm)
+    slot := lookup(env, nm)
+    is_list(lty) && op == "+=" ? (rhs ? {                // xs += [ ... ]  ->  in-place push
+      List(es) => { pir, c2 := gen_push(slot, lty, es, env, c); (pir, env, c2, "", "false", "i64") }
+      _ => gen_store(Bin(iop(op), Name(nm), rhs), slot, lty, env, c)
+    }) :
+    // x op= e  is  x = x op e; reuse gen_expr's typed binary by rewriting it.
+    gen_store(Bin(iop(op), Name(nm), rhs), slot, lty, env, c)
+  }
+  Ret(e) => { i2, op, of, ot, c2 := gen_expr(e, env, c); (i2, env, c2, op, of, ot) }
+  _ => ("", env, c, "", "false", "i64")
+  }
 }
 
-gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> str {
+gen_body := (stmts: [Node], env0: [(str, str)], c0: int, retll: str) -> str {
   ir:  &str := ""
   env: &[(str, str)] := env0
   c:   &int := c0
@@ -1412,7 +1456,7 @@ gen_body := (stmts: [(str, str)], env0: [(str, str)], c0: int, retll: str) -> st
 }
 
 // a { block } in expression position: run its statements, yield the last value.
-gen_block := (stmts: [(str, str)], env: [(str, str)], c: int) -> (str, str, str, str, int) {
+gen_block := (stmts: [Node], env: [(str, str)], c: int) -> (str, str, str, str, int) {
   ir:  &str := ""
   e:   &[(str, str)] := env
   cc:  &int := c
@@ -1430,29 +1474,30 @@ gen_block := (stmts: [(str, str)], env: [(str, str)], c: int) -> (str, str, str,
   (ir, val, fl, ty, cc)
 }
 
-// ("fn", name, params, rettype, stmts) -> a complete `define`. ftab seeds the
-// env with every top-level function's signature so calls resolve return types.
-gen_fn := (fn: (str, str), ftab: [(str, str)]) -> str {
-  name   := fn.1
-  params := fn.2                                        // [(name, type)]
-  rty    := fn.3
-  stmts  := fn.4
-  retll  := lltype(rty)
-  sig:   &str := ""
-  setup: &str := ""
-  env0:  &[(str, str)] := ftab
-  params @ (i: pr => {
-    pty  := pr.1
-    pll  := lltype(pty)
-    pp   := `%a{i}`
-    slot := `%a{i}_addr`
-    sig   = sig + (i == 0 ? "" : ", ") + pll + " " + pp
-    setup = setup + "  " + slot + " = alloca " + pll + "\n  store " + pll + " " + pp + ", ptr " + slot + "\n"
-    env0  = env0 + [(pr.0, slot, pty)]
-    ()
-  })
-  "define " + retll + " @" + name + "(" + sig + ") {\n" +
-  "entry:\n" + setup + gen_body(stmts, env0, 0, retll) + "}\n"
+// Fn(name, params, rettype, stmts) -> a complete `define`. ftab seeds the env
+// with every top-level function's signature so calls resolve return types.
+gen_fn := (fn: Node, ftab: [(str, str)]) -> str {
+  fn ? {
+  Fn(name, params, rty, stmts) => {
+    retll  := lltype(rty)
+    sig:   &str := ""
+    setup: &str := ""
+    env0:  &[(str, str)] := ftab
+    params @ (i: pr => {
+      pty  := pr.1
+      pll  := lltype(pty)
+      pp   := `%a{i}`
+      slot := `%a{i}_addr`
+      sig   = sig + (i == 0 ? "" : ", ") + pll + " " + pp
+      setup = setup + "  " + slot + " = alloca " + pll + "\n  store " + pll + " " + pp + ", ptr " + slot + "\n"
+      env0  = env0 + [(pr.0, slot, pty)]
+      ()
+    })
+    "define " + retll + " @" + name + "(" + sig + ") {\n" +
+    "entry:\n" + setup + gen_body(stmts, env0, 0, retll) + "}\n"
+  }
+  _ => ""
+  }
 }
 
 // the module preamble: a static bump arena (allocate, never free until exit;
@@ -1587,27 +1632,37 @@ start_stub := (np: int) -> str {
     "  %e = call i64 @__sys(i64 94, i64 %r, i64 0, i64 0, i64 0, i64 0, i64 0)\n  unreachable\n}\n"
 }
 
-gen := (fns: [(str, str)]) -> str {
+gen := (fns: [Node], vds: [(str, str, [(str, str, [str])])]) -> str {
   // env seed: the runtime helper, every fn's signature, and every variant case's
   // constructor marker ("ctor", tag, typename, [fieldtypes]) — tag = case index.
   ftab: &[(str, str)] := [("__itoa", "@__itoa", ("fn", "str"))]
   fns @ (f => {
-    f.0 == "fn" ? { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))] } :
-    f.0 == "variant" ? {
-      cs := f.2
-      cs @ (i: c => { ftab = ftab + [(c.1, "@ctor", ("ctor", `{i}`, f.1, c.2))]; () })
-    } : ()
+    f ? {
+      Fn(name, params, rty, stmts) => { ftab = ftab + [(name, "@" + name, ("fn", rty))]; () }
+      _ => ()
+    }
+    ()
+  })
+  vds @ (vd => {
+    cs := vd.2
+    cs @ (i: c => { ftab = ftab + [(c.1, "@ctor", ("ctor", `{i}`, vd.1, c.2))]; () })
     ()
   })
   out: &str := preamble()
-  fns @ (f => { f.0 == "fn" ? { out = out + gen_fn(f, ftab) } : (); () })
+  fns @ (f => { out = out + gen_fn(f, ftab); () })
   np: &int := 0
-  fns @ (f => { f.0 == "fn" && f.1 == "main" ? { ps := f.2; np = ps.len } : (); () })
+  fns @ (f => {
+    n := f ? { Fn(name, params, rty, stmts) => name == "main" ? params.len + 1 : 0
+      _ => 0 }
+    n > 0 ? { np = n - 1 } : ()
+    ()
+  })
   out + start_stub(np)
 }
 
 main := (args: [str]) -> int {
   src := fs.read(args[0])
-  fs.write(args[1], gen(parse_program(lex(src))))
+  fns, vds := parse_program(lex(src))
+  fs.write(args[1], gen(fns, vds))
   0
 }
