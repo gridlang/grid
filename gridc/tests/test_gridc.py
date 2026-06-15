@@ -360,3 +360,47 @@ def test_backtick_interpolation(body, val, tmp_path):
 def test_amortized_append(body, val, tmp_path):
     program = "main := () -> int {\n  " + body + "\n}\n"
     assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val
+
+
+@clang
+@pytest.mark.parametrize("program,val", [
+    # construct + single-arm match, binding a field
+    ('Box := | B str\n'
+     'main := () -> int {\n  x := B("hello")\n  x ? { B(s) => s.len }\n}', 5),
+    # a multi-field positional case
+    ('Pt := | P str str\n'
+     'main := () -> int {\n  p := P("ab", "cde")\n  p ? { P(a, b) => a.len + b.len }\n}', 5),
+    # tag discrimination across cases + wildcard fallthrough
+    ('C := | A str | B str\n'
+     'main := () -> int {\n  x := B("q")\n  x ? { A(s) => 1\n    _ => 2 }\n}', 2),
+    # no arm matches -> () -> main returns 0
+    ('C := | A str | B str\n'
+     'main := () -> int {\n  x := B("q")\n  x ? { A(s) => 9 }\n}', 0),
+    # recursion over a recursive variant (tree node count)
+    ('T := | Lf str | Br T T\n'
+     'size := (t: T) -> int { t ? { Lf(s) => 1\n    Br(l, r) => size(l) + size(r) } }\n'
+     'main := () -> int {\n  tr := Br(Br(Lf("a"), Lf("b")), Lf("c"))\n  size(tr)\n}', 3),
+    # a tiny expression evaluator (sum of leaf string lengths)
+    ('Ex := | Num str | Plus Ex Ex\n'
+     'eval := (e: Ex) -> int { e ? { Num(s) => s.len\n    Plus(a, b) => eval(a) + eval(b) } }\n'
+     'main := () -> int {\n  ex := Plus(Num("aa"), Plus(Num("b"), Num("ccc")))\n  eval(ex)\n}', 6),
+    # variants stored in a list, matched per element (effect-only arm yields ())
+    ('Tok := | Num str | Sym str\n'
+     'main := () -> int {\n  ts := [Num("42"), Sym("+"), Num("7")]\n'
+     '  s: &int := 0\n  ts @ (t => t ? { Num(n) => s += n.len\n    _ => () })\n  s\n}', 3),
+    # the self-host blocker: an accumulator (&Variant) reassigned across a fold
+    ('N := | I str | Bin str N N\n'
+     'main := () -> int {\n  parts := [I("1"), I("2"), I("3")]\n'
+     '  acc: &N := parts[0]\n  k: &int := 1\n'
+     '  { k < parts.len } @ { acc = Bin("+", acc, parts[k]); k += 1; () }\n'
+     '  acc ? { Bin(op, l, r) => 7\n    _ => 0 }\n}', 7),
+    # a nullary case (no payload) constructed bare and discriminated by tag
+    ('Tree := | Leaf | Node str Tree Tree\n'
+     'depth := (t: Tree) -> int { t ? { Leaf => 0\n    Node(v, l, r) => 1 } }\n'
+     'main := () -> int {\n  a := Node("x", Leaf, Leaf)\n  b := Leaf\n  depth(a) * 10 + depth(b)\n}', 10),
+    # single-line declaration; a `_` binding skips a field
+    ('Pair := | Pr str str\n'
+     'main := () -> int {\n  p := Pr("ab", "cdef")\n  p ? { Pr(_, b) => b.len }\n}', 4),
+])
+def test_variants(program, val, tmp_path):
+    assert compile_exit(program, tmp_path) == interp_exit(program, tmp_path) == val

@@ -345,16 +345,78 @@ parse_armbody := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   { node, p := parse_expr(toks, pos); (node, p) }       // a { block } or ( expr ) body
 }
 
+// does the brace at `pos` open a match block (a top-level `=>` arm) rather than a
+// plain `{ stmts }` body? Scan to the matching close, tracking bracket depth; a
+// `=>` at depth 1 (directly inside the block, not in a nested `(...)`) means match.
+is_match_block := (toks: [(str, str)], pos: int) -> int {
+  depth: &int := 0
+  cur:   &int := pos
+  found: &int := 0
+  done:  &int := 0
+  { tkind(toks, cur) != "eof" && done == 0 } @ {
+    k := tkind(toks, cur)
+    (k == "{" || k == "(" || k == "[") ? { depth += 1 } :
+    (k == "}" || k == ")" || k == "]") ? {
+      depth -= 1
+      depth == 0 ? { done = 1 } : ()
+    } :
+    (k == "=>" && depth == 1) ? { found = 1 } : ()
+    cur += 1
+    ()
+  }
+  found
+}
+
+// a match pattern: `_` (wildcard), `Case(b0, b1, …)` (ctor with bindings, `_` to
+// skip a field), or a bare `Case` (nullary). -> ("pwild","_") | ("pctor",name,[binds]).
+parse_pattern := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  nm := ttext(toks, pos)
+  nm == "_" ? (("pwild", "_"), pos + 1) :
+  tkind(toks, pos + 1) == "(" ? {
+    binds: &[str] := []
+    cur:   &int := pos + 2
+    { tkind(toks, cur) != ")" && tkind(toks, cur) != "eof" } @ {
+      binds = binds + [ttext(toks, cur)]
+      cur = tkind(toks, cur + 1) == "," ? cur + 2 : cur + 1
+      ()
+    }
+    (("pctor", nm, binds), cur + 1)
+  } :
+  (("pctor", nm, []), pos + 1)
+}
+
+// the arms of a match block: `pat => result` lines until the closing `}`.
+// -> [("marm", pattern, result-stmt)], index just past `}`.
+parse_arms := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
+  arms: &[(str, str)] := []
+  cur:  &int := skip_nl(toks, pos + 1)                  // skip `{` and any newlines
+  { tkind(toks, cur) != "}" && tkind(toks, cur) != "eof" } @ {
+    pat, p1 := parse_pattern(toks, cur)
+    res, p2 := parse_stmt(toks, p1 + 1)                 // skip `=>`
+    arms = arms + [("marm", pat, res)]
+    cur = skip_nl(toks, p2)
+    ()
+  }
+  (arms, cur + 1)
+}
+
 // cond ? then : else  ->  ("if", cond, then, else)   (loosest, right-assoc)
 // cond ? then         ->  ("try", cond, then)        (one-armed: present or ())
+// subj ? { pat => res … } -> ("match", subj, arms)   (variant tag dispatch)
 parse_ternary := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   cond, p := parse_comb(toks, pos)
   tkind(toks, p) == "?" ? {
-    then, p2 := parse_expr(toks, p + 1)
-    tkind(toks, p2) == ":" ? {
-      els, p3 := parse_expr(toks, p2 + 1); (("if", cond, then, els), p3)
+    tkind(toks, p + 1) == "{" && is_match_block(toks, p + 1) == 1 ? {
+      arms, p2 := parse_arms(toks, p + 1)
+      (("match", cond, arms), p2)
     } :
-    (("try", cond, then), p2)
+    {
+      then, p2 := parse_expr(toks, p + 1)
+      tkind(toks, p2) == ":" ? {
+        els, p3 := parse_expr(toks, p2 + 1); (("if", cond, then, els), p3)
+      } :
+      (("try", cond, then), p2)
+    }
   } :
   (cond, p)
 }
@@ -417,9 +479,13 @@ parse_body := (toks: [(str, str)], pos: int) -> ([(str, str)], int) {
   (stmts, cur)
 }
 
+// a capitalized leading letter marks a type / variant-case name (vs a builtin
+// like `int` / `str` or a lowercase binding). Returns present/() like a predicate.
+is_typename := (nm: str) -> str { nm[0] >= "A" && nm[0] <= "Z" }
+
 // a type annotation -> a structured type (scalar string / ("tup",[..]) /
-// ("lst",elem) / ("fn",ret)). Storage capabilities (&/*) and fallible error
-// channels (! E) don't affect the value rep, so they're stripped here.
+// ("lst",elem) / ("fn",ret) / ("var",name)). Storage capabilities (&/*) and
+// fallible error channels (! E) don't affect the value rep, so they're stripped.
 parse_type := (toks: [(str, str)], pos: int) -> (str, int) {
   k := tkind(toks, pos)
   (k == "&" || k == "*") ? parse_type(toks, pos + 1) :
@@ -452,7 +518,9 @@ parse_type := (toks: [(str, str)], pos: int) -> (str, int) {
     }
   } :
   k == "name" ? {
-    base := ttext(toks, pos) == "str" ? "str" : "i64"  // int + all sized ints -> i64
+    nm := ttext(toks, pos)                              // int + all sized ints -> i64;
+    base := nm == "str" ? "str" :                       // a capitalized name -> a variant
+      is_typename(nm) ? ("var", nm) : "i64"
     parse_type_suffix(toks, pos + 1, base)
   } :
   ("i64", pos + 1)
@@ -489,6 +557,31 @@ parse_fn := (toks: [(str, str)], pos: int) -> ((str, str), int) {
   (("fn", name, params, rty, stmts), p3 + 1)
 }
 
+// Name := | Case0 T.. | Case1 T.. | …   ->   ("variant", name, [("case", cname, [fieldtypes])]).
+// each case's fields are space-separated type atoms; cases may span lines (a leading
+// `|` after a newline continues the declaration). The leading `|` distinguishes this
+// from `x := a | b` (bitwise-or), so parse_program peeks for `:=` `|` before calling.
+parse_variant := (toks: [(str, str)], pos: int) -> ((str, str), int) {
+  name := ttext(toks, pos)
+  cases: &[(str, str)] := []
+  cur:   &int := pos + 2                            // skip name :=
+  { tkind(toks, cur) == "|" } @ {
+    cname := ttext(toks, cur + 1)
+    fields: &[str] := []
+    fc:     &int := cur + 2
+    { tkind(toks, fc) != "|" && tkind(toks, fc) != "nl" && tkind(toks, fc) != "eof" } @ {
+      ft, p := parse_type(toks, fc)
+      fields = fields + [ft]
+      fc = p
+      ()
+    }
+    cases = cases + [("case", cname, fields)]
+    cur = skip_nl(toks, fc)                         // a `|` after newline -> another case
+    ()
+  }
+  (("variant", name, cases), cur)
+}
+
 parse_program := (toks: [(str, str)]) -> [(str, str)] {
   fns: &[(str, str)] := []
   cur: &int := skip_nl(toks, 0)
@@ -497,6 +590,11 @@ parse_program := (toks: [(str, str)]) -> [(str, str)] {
     tkind(toks, cur) == "name" && (ttext(toks, cur) == "module" || ttext(toks, cur) == "import") ? {
       { tkind(toks, cur) != "nl" && tkind(toks, cur) != "eof" } @ { cur += 1; () }
       cur = skip_nl(toks, cur)
+    } :
+    tkind(toks, cur) == "name" && tkind(toks, cur + 1) == ":=" && tkind(toks, cur + 2) == "|" ? {
+      v, p := parse_variant(toks, cur)               // a sum-type declaration
+      fns = fns + [v]
+      cur = skip_nl(toks, p)
     } :
     {
       f, p := parse_fn(toks, cur)
@@ -557,11 +655,15 @@ lltype := (t: str) -> str {
   t == "str" ? "{i64, ptr}" :
   t.0 == "lst" ? "{i64, i64, ptr}" :                    // {len, cap, ptr} — growable
   t.0 == "fn" ? "ptr" :                                 // a function value is a code pointer
+  t.0 == "var" ? "{i64, ptr}" :                         // variant: {tag, payload ptr}
   "{" + tup_ll(t.1) + "}"
 }
 
 is_fn := (t: str) -> str { t != "i64" && t != "str" && t.0 == "fn" }
 is_list := (t: str) -> str { t != "i64" && t != "str" && t.0 == "lst" }
+is_var := (t: str) -> str { t != "i64" && t != "str" && t.0 == "var" }
+// a constructor marker ("ctor", tag, typename, [fieldtypes]) lives in the env.
+is_ctor := (t: str) -> str { t != "i64" && t != "str" && t.0 == "ctor" }
 
 tup_ll := (fields: [str]) -> str {
   out: &str := ""
@@ -582,6 +684,7 @@ gen_present := (v: str, vt: str, c: int) -> (str, str, int) {
     tag := `%t{c}`
     ("  " + tag + " = icmp ne i64 " + v + ", 0\n", tag, c + 1)
   } :
+  is_var(vt) ? ("", "true", c) :                        // a constructed variant is always present
   {
     fld := vt == "str" ? "1" : "2"                      // str {len,ptr} / list {len,cap,ptr}
     p := `%t{c}`
@@ -706,11 +809,106 @@ bind_arm := (arm: (str, str), es: str, et: str, idxop: str, env: [(str, str)], c
   (env + [(arm.1, es, et)], "", "", arm.2, c)            // plain ( name => stmt )
 }
 
+// bind a ctor pattern's fields: load the payload struct from `plr`, then bind each
+// named field (`_` skips a field) as a fresh local. -> (env', instructions, counter).
+bind_pat := (pat: (str, str), env: [(str, str)], plr: str, c: int) -> ([(str, str)], str, int) {
+  pat.0 == "pctor" && pat.2.len > 0 ? {
+    marker := lookup_type(env, pat.1)                    // ("ctor", tag, typename, [fieldtypes])
+    ftypes := marker.3
+    pll := "{" + tup_ll(ftypes) + "}"
+    ps  := `%t{c}`
+    ir: &str := "  " + ps + " = load " + pll + ", ptr " + plr + "\n"
+    e2: &[(str, str)] := env
+    cc: &int := c + 1
+    pat.2 @ (j: bn => {
+      bn != "_" ? {
+        fty  := ftypes[j]
+        fll  := lltype(fty)
+        fv   := `%t{cc}`
+        slot := `%s{cc + 1}`
+        ir = ir + "  " + fv + " = extractvalue " + pll + " " + ps + ", " + `{j}` + "\n" +
+          "  " + slot + " = alloca " + fll + "\n  store " + fll + " " + fv + ", ptr " + slot + "\n"
+        e2 = e2 + [(bn, slot, fty)]
+        cc = cc + 2
+      } : ()
+      ()
+    })
+    (e2, ir, cc)
+  } :
+  (env, "", c)                                           // wildcard / nullary: nothing to bind
+}
+
+// subj ? { pat => res … } — dispatch on the variant tag. Each arm tests its case
+// tag (a `_` wildcard matches unconditionally), binds its fields, runs its result,
+// and stores into a shared slot; no arm matching yields () (flag false). The arm
+// result type (taken from the first arm) types the slot. -> (ir, value, flag, type, c).
+gen_match := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
+  arms := node.2
+  sir, sv, sf, st, c1 := gen_expr(node.1, env, c)
+  L    := `{c1}`
+  tagr := `%t{c1}`
+  plr  := `%t{c1 + 1}`
+  resslot  := `%mr{c1}`
+  flagslot := `%mf{c1}`
+  head := sir +
+    "  " + tagr + " = extractvalue {i64, ptr} " + sv + ", 0\n" +
+    "  " + plr  + " = extractvalue {i64, ptr} " + sv + ", 1\n"
+  rty:  &str := "i64"
+  rgty: &str := "i64"
+  disp: &str := ""
+  cc:   &int := c1 + 2
+  i:    &int := 0
+  na := arms.len
+  { i < na } @ {
+    arm := arms[i]
+    pat := arm.1
+    benv, bir, c2 := bind_pat(pat, env, plr, cc)
+    si, renv, c3, rop, rfl, rt := gen_stmt(arm.2, benv, c2)
+    i == 0 ? { rty = lltype(rt); rgty = rt } : ()
+    ropv := rop == "" ? (rty == "i64" ? "0" : "zeroinitializer") : rop  // an effect arm yields ()
+    test: &str := ""
+    pat.0 == "pwild" ? {
+      test = "  br label %arm" + L + "_" + `{i}` + "\n"
+      cc = c3
+    } :
+    {
+      marker := lookup_type(env, pat.1)
+      cmp := `%t{c3}`
+      test = "  " + cmp + " = icmp eq i64 " + tagr + ", " + marker.1 + "\n" +
+        "  br i1 " + cmp + ", label %arm" + L + "_" + `{i}` + ", label %nx" + L + "_" + `{i}` + "\n"
+      cc = c3 + 1
+    }
+    disp = disp + test +
+      "arm" + L + "_" + `{i}` + ":\n" + bir + si +
+      "  store " + rty + " " + ropv + ", ptr " + resslot + "\n" +
+      "  store i1 " + rfl + ", ptr " + flagslot + "\n" +
+      "  br label %mend" + L + "\n" +
+      "nx" + L + "_" + `{i}` + ":\n"
+    i = i + 1
+    ()
+  }
+  zero := rty == "i64" ? "0" : "zeroinitializer"
+  v := `%t{cc}`
+  f := `%t{cc + 1}`
+  body := head +
+    "  " + resslot + " = alloca " + rty + "\n" +
+    "  " + flagslot + " = alloca i1\n" +
+    disp +
+    "  store " + rty + " " + zero + ", ptr " + resslot + "\n" +
+    "  store i1 false, ptr " + flagslot + "\n" +
+    "  br label %mend" + L + "\n" +
+    "mend" + L + ":\n" +
+    "  " + v + " = load " + rty + ", ptr " + resslot + "\n" +
+    "  " + f + " = load i1, ptr " + flagslot + "\n"
+  (body, v, f, rgty, cc + 2)
+}
+
 // gen_expr -> (instructions, value-operand, i1 present-flag, type, next-counter).
 // type is "i64" or "str"; `flag` is "true" for an always-present value, a
 // dynamic i1 for a one-armed `?` or an `@` find.
 gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
   node.0 == "block" ? gen_block(node.1, env, c) :
+  node.0 == "match" ? gen_match(node, env, c) :
   node.0 == "unit" ? ("", "0", "false", "i64", c) :    // () — absent
   node.0 == "int"  ? ("", node.1, "true", "i64", c) :
   node.0 == "str"  ? {                                  // literal -> fat {len, ptr}
@@ -730,6 +928,13 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   node.0 == "name" ? {
     ty := lookup_type(env, node.1)
     slot := lookup(env, node.1)
+    is_ctor(ty) ? {                                      // a nullary variant: {tag, null}
+      v0 := `%t{c}`
+      v1 := `%t{c + 1}`
+      ("  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + ty.1 + ", 0\n" +
+       "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr null, 1\n",
+       v1, "true", ("var", ty.2), c + 2)
+    } :
     is_fn(ty) ? {                                        // a function value
       slot[0] == "@" ?
         ("", slot, "true", ty, c) :                      // top-level fn: its address @name
@@ -842,6 +1047,36 @@ gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str
   node.0 == "call" && node.1 == "fs.write" ? {          // host: write a str to a file -> ()
     air, ops, c2 := gen_args(node.2, env, c)
     (air + "  call void @__write(" + ops + ")\n", "0", "false", "i64", c2)
+  } :
+  node.0 == "call" && is_ctor(lookup_type(env, node.1)) ? {  // variant construction
+    marker := lookup_type(env, node.1)                  // ("ctor", tag, typename, [fieldtypes])
+    ftypes := marker.3
+    pll := "{" + tup_ll(ftypes) + "}"                   // the payload struct layout
+    air, ops, tys, c1 := gen_elems(node.2, env, c)
+    acc:  &str := "undef"
+    body: &str := air
+    cc:   &int := c1
+    ops @ (i: op => {                                    // build the payload struct value
+      reg := `%t{cc}`
+      body = body + "  " + reg + " = insertvalue " + pll + " " + acc + ", " +
+        lltype(ftypes[i]) + " " + op + ", " + `{i}` + "\n"
+      acc = reg
+      cc = cc + 1
+      ()
+    })
+    szp := `%t{cc}`
+    szb := `%t{cc + 1}`
+    mem := `%t{cc + 2}`
+    v0  := `%t{cc + 3}`
+    v1  := `%t{cc + 4}`
+    body = body +                                        // alloc the payload, store it, pack {tag, ptr}
+      "  " + szp + " = getelementptr " + pll + ", ptr null, i64 1\n" +
+      "  " + szb + " = ptrtoint ptr " + szp + " to i64\n" +
+      "  " + mem + " = call ptr @__alloc(i64 " + szb + ")\n" +
+      "  store " + pll + " " + acc + ", ptr " + mem + "\n" +
+      "  " + v0 + " = insertvalue {i64, ptr} undef, i64 " + marker.1 + ", 0\n" +
+      "  " + v1 + " = insertvalue {i64, ptr} " + v0 + ", ptr " + mem + ", 1\n"
+    (body, v1, "true", ("var", marker.2), cc + 5)
   } :
   node.0 == "call" ? {
     cir, callee, cf, ct, c1 := gen_expr(("name", node.1), env, c)  // @name or a loaded fn ptr
@@ -1353,12 +1588,21 @@ start_stub := (np: int) -> str {
 }
 
 gen := (fns: [(str, str)]) -> str {
-  ftab: &[(str, str)] := [("__itoa", "@__itoa", ("fn", "str"))]   // runtime helper
-  fns @ (f => { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))]; () })
+  // env seed: the runtime helper, every fn's signature, and every variant case's
+  // constructor marker ("ctor", tag, typename, [fieldtypes]) — tag = case index.
+  ftab: &[(str, str)] := [("__itoa", "@__itoa", ("fn", "str"))]
+  fns @ (f => {
+    f.0 == "fn" ? { ftab = ftab + [(f.1, "@" + f.1, ("fn", f.3))] } :
+    f.0 == "variant" ? {
+      cs := f.2
+      cs @ (i: c => { ftab = ftab + [(c.1, "@ctor", ("ctor", `{i}`, f.1, c.2))]; () })
+    } : ()
+    ()
+  })
   out: &str := preamble()
-  fns @ (f => { out = out + gen_fn(f, ftab); () })
+  fns @ (f => { f.0 == "fn" ? { out = out + gen_fn(f, ftab) } : (); () })
   np: &int := 0
-  fns @ (f => { f.1 == "main" ? { ps := f.2; np = ps.len } : (); () })
+  fns @ (f => { f.0 == "fn" && f.1 == "main" ? { ps := f.2; np = ps.len } : (); () })
   out + start_stub(np)
 }
 

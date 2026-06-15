@@ -707,7 +707,11 @@ class Parser:
         if isinstance(node, Unit):
             return UnitPat()
         if isinstance(node, Name):
-            return WildPat() if node.id == "_" else BindPat(node.id)
+            if node.id == "_":
+                return WildPat()
+            if node.id[:1].isupper():                               # a bare Capitalized name is a
+                return CtorPat(node.id, [])                         # nullary variant-case pattern
+            return BindPat(node.id)
         if isinstance(node, Tuple):
             return TuplePat([self.to_pattern(i) for i in node.items])
         if isinstance(node, ListLit):
