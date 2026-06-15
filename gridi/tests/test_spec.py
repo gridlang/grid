@@ -224,3 +224,45 @@ def test_pipeline():
            "1..10 # (n => n % 2 == 1 ? n) # (_ * _) @ (s => odd_sq_sum += s)\n"
            "odd_sq_sum")
     assert run(src) == 165
+
+
+# ── IM9: sum-type variants (Node := | Int str | Bin str Node Node) ────────────
+
+def test_variant_nullary_eq():
+    assert run("Tree := | Leaf | Node str Tree Tree\nLeaf == Leaf ? 1 : 0") == 1
+
+def test_variant_construct_and_match():
+    assert run("Box := | B str\nx := B(\"hello\")\nx ? { B(s) => s.len }") == 5
+
+def test_variant_multifield_positional():
+    assert run("Pt := | P str str\np := P(\"ab\", \"cde\")\np ? { P(a, b) => a.len + b.len }") == 5
+
+def test_variant_nested_pattern():
+    assert run("E := | Lit str | Add E E\nt := Add(Lit(\"12\"), Lit(\"3\"))\n"
+               "t ? { Add(Lit(a), Lit(b)) => a.len + b.len }") == 3
+
+def test_variant_wildcard_fallthrough():
+    assert run("C := | A str | B str\nx := B(\"q\")\nx ? { A(s) => 1\n  _ => 2 }") == 2
+
+def test_variant_no_match_yields_unit():
+    assert run("C := | A str | B str\nx := B(\"q\")\nx ? { A(s) => 9 }") is UNIT
+
+def test_variant_recursion_fold():
+    assert run("T := | Lf str | Br T T\n"
+               "size := (t: T) -> int { t ? { Lf(s) => 1\n    Br(l, r) => size(l) + size(r) } }\n"
+               "tr := Br(Br(Lf(\"a\"), Lf(\"b\")), Lf(\"c\"))\nsize(tr)") == 3
+
+def test_variant_eval_tree():
+    assert run("Ex := | Num str | Plus Ex Ex\n"
+               "eval := (e: Ex) -> int { e ? { Num(s) => s.len\n    Plus(a, b) => eval(a) + eval(b) } }\n"
+               "ex := Plus(Num(\"aa\"), Plus(Num(\"b\"), Num(\"ccc\")))\neval(ex)") == 6
+
+def test_variant_in_list():
+    assert run("Tok := | Num str | Sym str\nts := [Num(\"42\"), Sym(\"+\"), Num(\"7\")]\n"
+               "s: &int := 0\nts @ (t => t ? { Num(n) => s += n.len\n    _ => () })\ns") == 3
+
+def test_variant_accumulator_reassigned():   # the exact self-host blocker pattern
+    assert run("N := | I str | Bin str N N\nparts := [I(\"1\"), I(\"2\"), I(\"3\")]\n"
+               "acc: &N := parts[0]\nk: &int := 1\n"
+               "{ k < parts.len } @ { acc = Bin(\"+\", acc, parts[k]); k += 1; () }\n"
+               "acc ? { Bin(op, l, r) => 7\n    _ => 0 }") == 7

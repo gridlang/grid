@@ -83,6 +83,12 @@ class BindPat:   name: str
 class WildPat:   pass
 @dataclass
 class TuplePat:  items: list
+@dataclass
+class CtorPat:   name: str; fields: list       # Bin(p1, p2, …) — a constructor pattern
+
+# variants
+@dataclass
+class VariantDecl: name: str; cases: list      # cases = [(case_name, arity)]
 
 
 # ─── Parser ─────────────────────────────────────────────────────────────────
@@ -172,6 +178,8 @@ class Parser:
             if nxt.kind == "DEFINE":                           # name := expr  (introduce)
                 name = self.eat("NAME").val
                 self.eat("DEFINE"); self.nl()
+                if self.at("PUNCT", "|"):                       # name := | A .. | B ..  (variant)
+                    return self.parse_variant_decl(name)
                 return Bind(name, self.parse_expr())
             if nxt.kind == "PUNCT" and nxt.val == ":":         # name: [&|*]T [:=|= expr]  (introduce)
                 name = self.eat("NAME").val
@@ -273,6 +281,55 @@ class Parser:
             if depth == 0 and t.kind == "PUNCT" and t.val in ("=", ",", ";", "!", "{"):
                 return
             self.i += 1
+
+    def _skip_type_atom(self):
+        # consume exactly one field-type atom: &T / *T prefix, a bare NAME, or a
+        # balanced ( … ) / [ … ] group. (Types aren't checked; we only count arity.)
+        t = self.cur()
+        if (t.kind == "PUNCT" and t.val == "&") or (t.kind == "OP" and t.val == "*"):
+            self.i += 1
+            self._skip_type_atom()
+            return
+        if t.kind == "PUNCT" and t.val in ("(", "["):
+            depth = 0
+            while True:
+                c = self.cur()
+                if c.kind == "PUNCT" and c.val in ("(", "["):
+                    depth += 1
+                elif c.kind == "PUNCT" and c.val in (")", "]"):
+                    depth -= 1
+                    self.i += 1
+                    if depth == 0:
+                        return
+                    continue
+                self.i += 1
+        else:
+            self.i += 1                                   # a bare type name (int, str, Node…)
+
+    def parse_variant_decl(self, name):
+        # | Case T T | Case2 | …  — each Case followed by 0+ field-type atoms.
+        # Cases may span lines; cross interior NLs but leave the final one as the
+        # item separator for parse_items.
+        cases = []
+        while True:
+            save = self.i
+            self.nl()
+            if not self.at("PUNCT", "|"):
+                self.i = save
+                break
+            self.eat("PUNCT", "|")
+            cname = self.eat("NAME").val
+            arity = 0
+            while True:
+                t = self.cur()
+                if t.kind == "NAME" or (t.kind == "PUNCT" and t.val in ("(", "[", "&")) \
+                        or (t.kind == "OP" and t.val == "*"):
+                    self._skip_type_atom()
+                    arity += 1
+                else:
+                    break
+            cases.append((cname, arity))
+        return VariantDecl(name, cases)
 
     # expressions --------------------------------------------------------------
 
@@ -655,6 +712,8 @@ class Parser:
             return TuplePat([self.to_pattern(i) for i in node.items])
         if isinstance(node, ListLit):
             return TuplePat([self.to_pattern(i) for i in node.items])
+        if isinstance(node, Call) and isinstance(node.fn, Name):    # Bin(p, q) — ctor pattern
+            return CtorPat(node.fn.id, [self.to_pattern(a) for a in node.args])
         raise SyntaxError(f"not a pattern: {node}")
 
 

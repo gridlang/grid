@@ -10,7 +10,7 @@ from .parser import (
     parse, Lit, Unit, Name, Tuple, ListLit, MapLit, StructLit, Bind, InPlace, Bin, Range,
     Try, Iter, Block, Match, Fn, Call, Member, MethodCall, Index, Bang, Interp,
     Destructure, Store, Emit, Defer, ModuleDecl, ImportDecl, KeyedMatch,
-    LitPat, UnitPat, BindPat, WildPat, TuplePat,
+    LitPat, UnitPat, BindPat, WildPat, TuplePat, CtorPat, VariantDecl,
 )
 
 
@@ -90,6 +90,23 @@ class Lambda:
     def __init__(self, node, env):
         self.node = node
         self.env = env
+
+
+class Ctor:
+    """A variant constructor (e.g. Bin) — callable; applying it builds a Variant."""
+    __slots__ = ("name", "arity")
+    def __init__(self, name, arity):
+        self.name = name
+        self.arity = arity
+
+
+class Variant:
+    """A sum-type value: a case name + its field values (recursion is free —
+    a field may itself be a Variant)."""
+    __slots__ = ("case", "fields")
+    def __init__(self, case, fields):
+        self.case = case
+        self.fields = fields
 
 
 class Stream:
@@ -206,6 +223,10 @@ def grid_eq(a, b):
         return a is b
     if isinstance(a, bool) or isinstance(b, bool):     # defensive; Grid has no bool
         return a is b
+    if isinstance(a, Variant) or isinstance(b, Variant):
+        return (isinstance(a, Variant) and isinstance(b, Variant)
+                and a.case == b.case and len(a.fields) == len(b.fields)
+                and all(grid_eq(x, y) for x, y in zip(a.fields, b.fields)))
     return type(a) == type(b) and a == b
 
 
@@ -250,6 +271,11 @@ def eval_node(node, env, topic):
             _defer_stack[-1].append((node.expr, env))
         return UNIT
     if t is ModuleDecl:
+        return UNIT
+    if t is VariantDecl:                                # bind each constructor in scope
+        for cname, arity in node.cases:
+            env.define(cname, Variant(cname, []) if arity == 0 else Ctor(cname, arity))
+        env.define(node.name, TypeTag(node.name))
         return UNIT
     if t is ImportDecl:
         env.define(node.name, STDLIB.get(node.name, {}))
@@ -362,6 +388,8 @@ def apply_func(f, args):
         finally:
             for expr, denv in reversed(_defer_stack.pop()):
                 eval_node(expr, denv, UNIT)
+    if isinstance(f, Ctor):                            # constructor: build a variant value
+        return Variant(f.name, list(args))
     if callable(f):                                    # builtin
         return f(*args)
     raise RuntimeError(f"not callable: {f!r}")
@@ -602,6 +630,10 @@ def match_pat(pat, topic, env):
         if not isinstance(topic, (tuple, list)) or len(topic) != len(pat.items):
             return False
         return all(match_pat(p, v, env) for p, v in zip(pat.items, topic))
+    if t is CtorPat:                                    # Bin(p, q) matches a Variant Bin
+        return (isinstance(topic, Variant) and topic.case == pat.name
+                and len(topic.fields) == len(pat.fields)
+                and all(match_pat(sp, fv, env) for sp, fv in zip(pat.fields, topic.fields)))
     raise RuntimeError(f"unknown pattern {pat}")
 
 
@@ -616,6 +648,10 @@ def grid_str(v):
         return "[" + ", ".join(grid_str(x) for x in v) + "]"
     if isinstance(v, dict):
         return "(" + ", ".join(f"{k}: {grid_str(x)}" for k, x in v.items()) + ")"
+    if isinstance(v, Variant):
+        return v.case if not v.fields else v.case + "(" + ", ".join(grid_str(x) for x in v.fields) + ")"
+    if isinstance(v, Ctor):
+        return "<ctor>"
     if isinstance(v, (Func, Lambda)):
         return "<fn>"
     if isinstance(v, TypeTag):
