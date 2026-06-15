@@ -21,7 +21,19 @@ import sys
 // ── lexer ────────────────────────────────────────────────────────────
 digit := (c: str) -> str { c >= "0" && c <= "9" }
 alpha := (c: str) -> str { (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_" }
+alnum := (c: str) -> str { alpha(c) || digit(c) }      // identifier continuation
 space := (c: str) -> str { c == " " || c == "\t" || c == "\r" }
+
+// a line ending in one of these tokens continues onto the next (no statement
+// break) — operators, ?:, comma, the arrows and assigns. Brackets are handled
+// by paren-depth instead.
+continues := (t: str) -> str {
+  t == "+" || t == "-" || t == "*" || t == "/" || t == "%" ||
+  t == "==" || t == "!=" || t == "<" || t == "<=" || t == ">" || t == ">=" ||
+  t == "&&" || t == "||" || t == "?" || t == ":" || t == "," || t == ".." ||
+  t == "->" || t == "=>" || t == ":=" || t == "=" ||
+  t == "+=" || t == "-=" || t == "*=" || t == "/="
+}
 
 scan := (src: str, start: int, n: int, p: (str) -> str) -> (str, int) {
   text: &str := ""
@@ -58,15 +70,21 @@ scan_bq := (src: str, start: int, n: int) -> (str, int) {
 lex := (src: str) -> [(str, str)] {
   toks: &[(str, str)] := []
   i: &int := 0
+  depth: &int := 0                                     // ( / [ nesting
+  last: &str := "nl"                                   // last emitted token
   n := src.len
   { i < n } @ {
     c := src[i]
-    (c == "\n" || c == ";") ? { toks = toks + [("nl", "nl")]; i += 1 } :
+    (c == "\n" || c == ";") ? {                        // statement break, unless continuing
+      depth > 0 || continues(last) ? () :
+        { toks = toks + [("nl", "nl")]; last = "nl" }
+      i += 1
+    } :
     space(c) ? { i += 1 } :
-    digit(c) ? { t, j := scan(src, i, n, digit); toks = toks + [("int", t)]; i = j } :
-    alpha(c) ? { t, j := scan(src, i, n, alpha); toks = toks + [("name", t)]; i = j } :
-    c == "\"" ? { t, j := scan_str(src, i + 1, n); toks = toks + [("str", t)]; i = j } :
-    c == "`" ? { t, j := scan_bq(src, i + 1, n); toks = toks + [("bq", t)]; i = j } :
+    digit(c) ? { t, j := scan(src, i, n, digit); toks = toks + [("int", t)]; last = "int"; i = j } :
+    alpha(c) ? { t, j := scan(src, i, n, alnum); toks = toks + [("name", t)]; last = "name"; i = j } :
+    c == "\"" ? { t, j := scan_str(src, i + 1, n); toks = toks + [("str", t)]; last = "str"; i = j } :
+    c == "`" ? { t, j := scan_bq(src, i + 1, n); toks = toks + [("bq", t)]; last = "bq"; i = j } :
     {
       two := i + 1 < n ? src[i] + src[i + 1] : ""
       two == "//" ? { { i < n && src[i] != "\n" } @ { i += 1; () } } :
@@ -74,9 +92,15 @@ lex := (src: str) -> [(str, str)] {
        two == "+=" || two == "-=" || two == "*=" || two == "/=" ||
        two == "==" || two == "!=" || two == "<=" || two == ">=" ||
        two == "&&" || two == "||") ? {
-        toks = toks + [(two, two)]; i += 2
+        toks = toks + [(two, two)]; last = two; i += 2
       } :
-      { toks = toks + [(c, c)]; i += 1 }
+      {
+        toks = toks + [(c, c)]
+        last = c
+        c == "(" || c == "[" ? { depth += 1 } : ()
+        c == ")" || c == "]" ? { depth -= 1 } : ()
+        i += 1
+      }
     }
     ()
   }
@@ -171,6 +195,8 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
     }
   } :
   k == "(" ? {
+    tkind(toks, pos + 1) == ")" ? (("unit", ""), pos + 2) :   // () the unit value
+    {
     first, p := parse_expr(toks, pos + 1)
     tkind(toks, p) == "," ? {                          // (a, b, ...) tuple
       elems: &[(str, str)] := [first]
@@ -184,6 +210,7 @@ parse_atom := (toks: [(str, str)], pos: int) -> ((str, str), int) {
       (("tuple", elems), cur + 1)
     } :
     (first, p + 1)                                      // plain (expr)
+    }
   } :
   (("int", "0"), pos + 1)
 }
@@ -466,9 +493,16 @@ parse_program := (toks: [(str, str)]) -> [(str, str)] {
   fns: &[(str, str)] := []
   cur: &int := skip_nl(toks, 0)
   { tkind(toks, cur) != "eof" } @ {
-    f, p := parse_fn(toks, cur)
-    fns = fns + [f]
-    cur = skip_nl(toks, p)
+    // skip module / import header lines (not functions)
+    tkind(toks, cur) == "name" && (ttext(toks, cur) == "module" || ttext(toks, cur) == "import") ? {
+      { tkind(toks, cur) != "nl" && tkind(toks, cur) != "eof" } @ { cur += 1; () }
+      cur = skip_nl(toks, cur)
+    } :
+    {
+      f, p := parse_fn(toks, cur)
+      fns = fns + [f]
+      cur = skip_nl(toks, p)
+    }
     ()
   }
   fns
@@ -489,9 +523,25 @@ relpred := (op: str) -> str {
 lookup := (env: [(str, str)], name: str) -> str { env @ ((n, s, t) => n == name ? s) }
 lookup_type := (env: [(str, str)], name: str) -> str { env @ ((n, s, t) => n == name ? t) }
 
-// render a decoded string for an LLVM c"..." literal. Test inputs are printable
-// ASCII; proper \NN escaping of specials/controls comes with self-host.
-escape_ll := (s: str) -> str { s }
+// render a decoded string for an LLVM c"..." literal: escape ", \, and the
+// control bytes as \NN (their byte length stays 1, matching the array type).
+escape_ll := (s: str) -> str {
+  out: &str := ""
+  i: &int := 0
+  m := s.len
+  { i < m } @ {
+    c := s[i]
+    out = out +
+      (c == "\"" ? "\\22" :
+       c == "\\" ? "\\5C" :
+       c == "\n" ? "\\0A" :
+       c == "\t" ? "\\09" :
+       c == "\r" ? "\\0D" : c)
+    i += 1
+    ()
+  }
+  out
+}
 
 // ── types ────────────────────────────────────────────────────────────
 // A type is either a scalar string ("i64" | "str") or a compound tuple:
@@ -661,6 +711,7 @@ bind_arm := (arm: (str, str), es: str, et: str, idxop: str, env: [(str, str)], c
 // dynamic i1 for a one-armed `?` or an `@` find.
 gen_expr := (node: (str, str), env: [(str, str)], c: int) -> (str, str, str, str, int) {
   node.0 == "block" ? gen_block(node.1, env, c) :
+  node.0 == "unit" ? ("", "0", "false", "i64", c) :    // () — absent
   node.0 == "int"  ? ("", node.1, "true", "i64", c) :
   node.0 == "str"  ? {                                  // literal -> fat {len, ptr}
     txt := node.1
